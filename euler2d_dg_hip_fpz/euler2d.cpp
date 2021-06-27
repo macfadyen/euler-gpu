@@ -212,7 +212,7 @@ struct UpdateStruct update_struct_new(int ni, int nj, real x0, real x1, real y0,
 
     real quadrature_node[2] = {-1.0/square_root(3.0), 1.0/square_root(3.0)};
 
-    nq = 0;
+    int nq = 0;
 
     for (int i = 0; i < NQFACE; ++i)
     {
@@ -229,7 +229,7 @@ struct UpdateStruct update_struct_new(int ni, int nj, real x0, real x1, real y0,
                 update.dphidy[nq][2] =  square_root(3.0);
                 update.cell_weight[nq] = 1.0;
 
-                n += 1;
+                nq += 1;
             }
     }   
 
@@ -274,16 +274,6 @@ void update_struct_set_conserved(struct UpdateStruct update, const real *conserv
         hipMemcpyHostToDevice
     );
 
-}
-
-void update_struct_get_primitive(struct UpdateStruct update, real *primitive_host)
-{
-    int num_zones = update.ni * update.nj;
-    hipMemcpy(primitive_host,
-        update.primitive,
-        num_zones * 4 * sizeof(real),
-        hipMemcpyDeviceToHost
-    );
 }
 
 __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real dt)
@@ -335,7 +325,7 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
             {
                 for (int l = 0; l < NK; ++l)
                 {
-                    cons[q] = czone[q * NK + l] * phi[nq][l];
+                    cons[q] = czone[q * NK + l] * update.phi[nq][l];
                 }
             }
 
@@ -347,7 +337,7 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
             {
                 for (int l = 0; l < NK; ++l)
                 {
-                    dw[q][l] +=  gauss_weight[nq] * (flux_x[q] * dphidx[l][nq] + flux_y[q] * dphidy[l][nq]);
+                    dw[q][l] +=  update.face_weight[nq] * (flux_x[q] * update.dphidx[l][nq] + flux_y[q] * update.dphidy[l][nq]);
                 }
             }   
         }
@@ -383,7 +373,7 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
             {
                 for (int l = 0; l < NK; ++l)
                 {
-                    dw[q][l] += flux_x[p] * update.phi_left[nq][l] * face_weight[nq];
+                    dw[q][l] += flux_x[q] * update.phi_left[nq][l] * update.face_weight[nq];
                 }
             }
         }
@@ -412,7 +402,7 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
             {
                 for (int l = 0; l < NK; ++l)
                 {
-                    dw[q][l] += -1.0 * flux_x[p] * update.phi_right[nq][l] * face_weight[nq];
+                    dw[q][l] += -1.0 * flux_x[q] * update.phi_right[nq][l] * update.face_weight[nq];
                 }
             }
         }  
@@ -441,7 +431,7 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
             {
                 for (int l = 0; l < NK; ++l)
                 {
-                    dw[q][l] += flux_y[p] * update.phi_left[nq][l] * face_weight[nq];
+                    dw[q][l] += flux_y[q] * update.phi_left[nq][l] * update.face_weight[nq];
                 }
             }
         }
@@ -470,7 +460,7 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
             {
                 for (int l = 0; l < NK; ++l)
                 {
-                    dw[q][l] += -1.0 * flux_y[p] * update.phi_top[nq][l] * face_weight[nq];
+                    dw[q][l] += -1.0 * flux_y[q] * update.phi_top[nq][l] * update.face_weight[nq];
                 }
             }
         }
@@ -527,7 +517,6 @@ int main()
         printf("[%d] t=%.3e Mzps=%.2f Mnps=%.2f\n", iteration, time, mzps, mnps);
     }
 
-    update_struct_get_primitive(update, primitive);
     update_struct_del(update);
 
     FILE* outfile = fopen("euler2d.dat", "w");
@@ -535,14 +524,14 @@ int main()
     {
         for (int j = 0; j < nj; ++j)
         {
-            real *prim = &primitive[4 * (i * nj + j)];
-            real x = (i + 0.5) * dx;
-            real y = (j + 0.5) * dy;
-            fprintf(outfile, "%f %f %f %f %f %f\n", x, y, prim[0], prim[1], prim[2], prim[3]);
+	  //            real *prim = &primitive[4 * (i * nj + j)];
+          //  real x = (i + 0.5) * dx;
+          //  real y = (j + 0.5) * dy;
+          //  fprintf(outfile, "%f %f %f %f %f %f\n", x, y, prim[0], prim[1], prim[2], prim[3]);
         }
     }
     fclose(outfile);
 
-    free(primitive);
+    //free(primitive);
     return 0;
 }
