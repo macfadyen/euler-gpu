@@ -12,7 +12,7 @@
 #define NCONS 4                // number of conserved variables
 #define NK 3                   // number of basis polynomials
 #define NQFACE 2               // number of quadrature points per face
-#define NQCELL NQFACE * NQFACE // number of cell quadrature points
+#define NQCELL 4               // number of cell quadrature points
 
 typedef double real;
 #define square_root sqrt
@@ -21,8 +21,8 @@ typedef double real;
 __device__ void conserved_to_primitive(const real *cons, real *prim)
 {
     const real rho = cons[0];
-    const real px = cons[1];
-    const real py = cons[2];
+    const real px  = cons[1];
+    const real py  = cons[2];
     const real energy = cons[3];
 
     const real vx = px / rho;
@@ -271,7 +271,7 @@ void update_struct_set_conserved(struct UpdateStruct update, const real *conserv
 
 }
 
-void update_struct_get_conserved(struct UpdateStruct update, real *primitive_host)
+void update_struct_get_conserved(struct UpdateStruct update, real *conserved_host)
 {
     int num_zones = update.ni * update.nj;
     hipMemcpy(conserved_host,
@@ -378,7 +378,7 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
             {
                 for (int l = 0; l < NK; ++l)
                 {
-                    dw[q][l] += flux_x[q] * update.phi_left[nq][l] * update.face_weight[nq];
+                    dw[q][l] -= flux_x[q] * update.phi_left[nq][l] * update.face_weight[nq];
                 }
             }
         }
@@ -407,7 +407,7 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
             {
                 for (int l = 0; l < NK; ++l)
                 {
-                    dw[q][l] += -1.0 * flux_x[q] * update.phi_right[nq][l] * update.face_weight[nq];
+                    dw[q][l] -= -1.0 * flux_x[q] * update.phi_right[nq][l] * update.face_weight[nq];
                 }
             }
         }  
@@ -436,7 +436,7 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
             {
                 for (int l = 0; l < NK; ++l)
                 {
-                    dw[q][l] += flux_y[q] * update.phi_left[nq][l] * update.face_weight[nq];
+                    dw[q][l] -= flux_y[q] * update.phi_left[nq][l] * update.face_weight[nq];
                 }
             }
         }
@@ -465,7 +465,7 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
             {
                 for (int l = 0; l < NK; ++l)
                 {
-                    dw[q][l] += -1.0 * flux_y[q] * update.phi_top[nq][l] * update.face_weight[nq];
+                    dw[q][l] -= -1.0 * flux_y[q] * update.phi_top[nq][l] * update.face_weight[nq];
                 }
             }
         }
@@ -474,7 +474,7 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
         {
             for (int l = 0; l < NK; ++l)
             {
-                 czone[q * NK + l] += dw[q][l]; 
+                 czone[q * NK + l] += 0.25 * dw[q][l]; 
             }
         }
 
@@ -483,8 +483,8 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
 
 int main()
 {
-    const int ni = 4096;
-    const int nj = 4096;
+    const int ni = 128;
+    const int nj = 128;
     const int fold = 10;
     const real x0 = 0.0;
     const real x1 = 1.0;
@@ -525,7 +525,7 @@ int main()
 
         real seconds = ((real) (end - start)) / CLOCKS_PER_SEC;
         real mzps = (ni * nj / 1e6) / seconds * fold;
-        real mnps = mzps / NQCELL;
+        real mnps = mzps * NQCELL;
         printf("[%d] t=%.3e Mzps=%.2f Mnps=%.2f\n", iteration, time, mzps, mnps);
     }
 
@@ -536,7 +536,7 @@ int main()
     {
         for (int j = 0; j < nj; ++j)
         {
-	        real *cons = &conserved[NCONS * NK * (i * nj + j)];
+	    real *cons = &conserved[NCONS * NK * (i * nj + j)];
             real x = (i + 0.5) * dx;
             real y = (j + 0.5) * dy;
             fprintf(outfile, "%f %f %f %f %f %f\n", x, y, cons[0], cons[3], cons[6], cons[9]);
