@@ -9,19 +9,14 @@
 #define min2(a, b) (a) < (b) ? (a) : (b)
 #define max2(a, b) (a) > (b) ? (a) : (b)
 
-#define NK 3     // number of basis polynomials
-#define NQFACE 2 // number of quadrature points per face
+#define NCONS 4                // number of conserved variables
+#define NK 3                   // number of basis polynomials
+#define NQFACE 2               // number of quadrature points per face
 #define NQCELL NQFACE * NQFACE // number of cell quadrature points
 
-#ifdef SINGLE
-typedef float real;
-#define square_root sqrtf
-#define power powf
-#else
 typedef double real;
 #define square_root sqrt
 #define power pow
-#endif
 
 __device__ void conserved_to_primitive(const real *cons, real *prim)
 {
@@ -74,7 +69,7 @@ __device__ void primitive_to_flux_vector(const real *prim, real *flux, int direc
 {
     const real vn = primitive_to_velocity_component(prim, direction);
     const real pressure = prim[3];
-    real cons[4];
+    real cons[NCONS];
     primitive_to_conserved(prim, cons);
 
     flux[0] = vn * cons[0];
@@ -100,10 +95,10 @@ __device__ void primitive_to_outer_wavespeeds(const real *prim, real *wavespeeds
 
 __device__ void riemann_hlle(const real *pl, const real *pr, real *flux, int direction)
 {
-    real ul[4];
-    real ur[4];
-    real fl[4];
-    real fr[4];
+    real ul[NCONS];
+    real ur[NCONS];
+    real fl[NCONS];
+    real fr[NCONS];
     real al[2];
     real ar[2];
 
@@ -117,7 +112,7 @@ __device__ void riemann_hlle(const real *pl, const real *pr, real *flux, int dir
     const real am = min2(0.0, min2(al[0], ar[0]));
     const real ap = max2(0.0, max2(al[1], ar[1]));
 
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < NCONS; ++i)
     {
         flux[i] = (fl[i] * ap - fr[i] * am - (ul[i] - ur[i]) * ap * am) / (ap - am);
     }
@@ -134,7 +129,7 @@ void initial_conserved(real *conserved, int ni, int nj, real x0, real x1, real y
         {
             real x = (i + 0.5) * dx;
             real y = (j + 0.5) * dy;
-            real *cons = &conserved[NK * 4 * (i * nj + j)];
+            real *cons = &conserved[NK * NCONS * (i * nj + j)];
             real r2 = power(x - 0.5, 2) + power(y - 0.5, 2);
 
             if (square_root(r2) < 0.125)
@@ -251,7 +246,7 @@ struct UpdateStruct update_struct_new(int ni, int nj, real x0, real x1, real y0,
         update.face_weight[i]   = 1.0;
     }
 
-    hipMalloc(&update.conserved, ni * nj * NK * 4 * sizeof(real));
+    hipMalloc(&update.conserved, ni * nj * NK * NCONS * sizeof(real));
 
     return update;
 }
@@ -270,10 +265,20 @@ void update_struct_set_conserved(struct UpdateStruct update, const real *conserv
     hipMemcpy(
         update.conserved,
         conserved_host,
-        num_zones * 2 * 4 * sizeof(real),
+        num_zones * NK * NCONS * sizeof(real),
         hipMemcpyHostToDevice
     );
 
+}
+
+void update_struct_get_conserved(struct UpdateStruct update, real *primitive_host)
+{
+    int num_zones = update.ni * update.nj;
+    hipMemcpy(conserved_host,
+        update.conserved,
+        num_zones * NK * NCONS * sizeof(real),
+        hipMemcpyDeviceToHost
+    );
 }
 
 __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real dt)
@@ -301,19 +306,19 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
         if (jr == update.nj)
             jr = update.nj - 1;
 
-        real       *czone   = &update.conserved[NK * 4 * (i  * nj +  j)];
+        real       *czone   = &update.conserved[NK * NCONS * (i  * nj +  j)];
 
-        const real *cleft   = &update.conserved[NK * 4 * (il * nj + j)];
-        const real *cright  = &update.conserved[NK * 4 * (ir * nj + j)];
-        const real *cbottom = &update.conserved[NK * 4 * (i  * nj + jl)];
-        const real *ctop    = &update.conserved[NK * 4 * (i  * nj + jr)];       
+        const real *cleft   = &update.conserved[NK * NCONS * (il * nj + j)];
+        const real *cright  = &update.conserved[NK * NCONS * (ir * nj + j)];
+        const real *cbottom = &update.conserved[NK * NCONS * (i  * nj + jl)];
+        const real *ctop    = &update.conserved[NK * NCONS * (i  * nj + jr)];       
 
-        real cons[4];
-        real prim[4];
-        real flux_x[4];
-        real flux_y[4];
+        real cons[NCONS];
+        real prim[NCONS];
+        real flux_x[NCONS];
+        real flux_y[NCONS];
 
-        real dw[4][NK];
+        real dw[NCONS][NK];
     
         // "Cell" Term
 
@@ -321,7 +326,7 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
         for (int nq = 0; nq < NQCELL; ++nq)
         {
             // calculate cons at the nodes
-            for (int q = 0; q < 4; ++q)
+            for (int q = 0; q < NCONS; ++q)
             {
                 for (int l = 0; l < NK; ++l)
                 {
@@ -333,21 +338,21 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
             primitive_to_flux_vector(prim, flux_x, 0);
             primitive_to_flux_vector(prim, flux_y, 1);
 
-            for (int q = 0; q < 4; ++q)
+            for (int q = 0; q < NCONS; ++q)
             {
                 for (int l = 0; l < NK; ++l)
                 {
-                    dw[q][l] +=  update.face_weight[nq] * (flux_x[q] * update.dphidx[l][nq] + flux_y[q] * update.dphidy[l][nq]);
+                    dw[q][l] +=  update.cell_weight[nq] * (flux_x[q] * update.dphidx[l][nq] + flux_y[q] * update.dphidy[l][nq]);
                 }
             }   
         }
 
         // Face terms
 
-        real consp[4];
-        real primp[4];
-        real consm[4];
-        real primm[4];
+        real consp[NCONS];
+        real primp[NCONS];
+        real consm[NCONS];
+        real primm[NCONS];
 
         //Left Face
 
@@ -355,7 +360,7 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
         for (int nq = 0; nq < NQFACE; ++nq)
         {
             // calculate cons at both sides of face nodes
-            for (int q = 0; q < 4; ++q)
+            for (int q = 0; q < NCONS; ++q)
             {
                 for (int l = 0; l < NK; ++l)
                 {
@@ -369,7 +374,7 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
 
             riemann_hlle(primm, primp, flux_x, 0);         
 
-            for (int q = 0; q < 4; ++q)
+            for (int q = 0; q < NCONS; ++q)
             {
                 for (int l = 0; l < NK; ++l)
                 {
@@ -384,7 +389,7 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
         for (int nq = 0; nq < NQFACE; ++nq)
         {
             // calculate cons at both sides of face nodes
-            for (int q = 0; q < 4; ++q)
+            for (int q = 0; q < NCONS; ++q)
             {
                 for (int l = 0; l < NK; ++l)
                 {
@@ -398,7 +403,7 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
 
             riemann_hlle(primm, primp, flux_x, 0);         
 
-            for (int q = 0; q < 4; ++q)
+            for (int q = 0; q < NCONS; ++q)
             {
                 for (int l = 0; l < NK; ++l)
                 {
@@ -413,7 +418,7 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
         for (int nq = 0; nq < NQFACE; ++nq)
         {
             // calculate cons at both sides of face nodes
-            for (int q = 0; q < 4; ++q)
+            for (int q = 0; q < NCONS; ++q)
             {
                 for (int l = 0; l < NK; ++l)
                 {
@@ -427,7 +432,7 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
 
             riemann_hlle(primm, primp, flux_y, 1);         
 
-            for (int q = 0; q < 4; ++q)
+            for (int q = 0; q < NCONS; ++q)
             {
                 for (int l = 0; l < NK; ++l)
                 {
@@ -442,7 +447,7 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
         for (int nq = 0; nq < NQFACE; ++nq)
         {
             // calculate cons at both sides of face nodes
-            for (int q = 0; q < 4; ++q)
+            for (int q = 0; q < NCONS; ++q)
             {
                 for (int l = 0; l < NK; ++l)
                 {
@@ -456,7 +461,7 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
 
             riemann_hlle(primm, primp, flux_y, 1);         
 
-            for (int q = 0; q < 4; ++q)
+            for (int q = 0; q < NCONS; ++q)
             {
                 for (int l = 0; l < NK; ++l)
                 {
@@ -465,6 +470,13 @@ __global__ void update_struct_do_advance_cons(struct UpdateStruct update, real d
             }
         }
 
+        for (int q = 0; q < NCONS; ++q)
+        {
+            for (int l = 0; l < NK; ++l)
+            {
+                 czone[q * NK + l] += dw[q][l]; 
+            }
+        }
 
     }
 }
@@ -481,7 +493,7 @@ int main()
     const real dx = (x1 - x0) / ni;
     const real dy = (y1 - y0) / nj;
 
-    real *conserved = (real*) malloc(ni * nj * NK * 4 * sizeof(real));
+    real *conserved = (real*) malloc(ni * nj * NK * NCONS * sizeof(real));
     struct UpdateStruct update = update_struct_new(ni, nj, x0, x1, y0, y1);
 
     initial_conserved(conserved, ni, nj, x0, x1, y0, y1);
@@ -513,7 +525,7 @@ int main()
 
         real seconds = ((real) (end - start)) / CLOCKS_PER_SEC;
         real mzps = (ni * nj / 1e6) / seconds * fold;
-        real mnps = mzps / 4;
+        real mnps = mzps / NQCELL;
         printf("[%d] t=%.3e Mzps=%.2f Mnps=%.2f\n", iteration, time, mzps, mnps);
     }
 
@@ -524,14 +536,14 @@ int main()
     {
         for (int j = 0; j < nj; ++j)
         {
-	  //            real *prim = &primitive[4 * (i * nj + j)];
-          //  real x = (i + 0.5) * dx;
-          //  real y = (j + 0.5) * dy;
-          //  fprintf(outfile, "%f %f %f %f %f %f\n", x, y, prim[0], prim[1], prim[2], prim[3]);
+	        real *cons = &conserved[NCONS * NK * (i * nj + j)];
+            real x = (i + 0.5) * dx;
+            real y = (j + 0.5) * dy;
+            fprintf(outfile, "%f %f %f %f %f %f\n", x, y, cons[0], cons[3], cons[6], cons[9]);
         }
     }
     fclose(outfile);
 
-    //free(primitive);
+    free(conserved);
     return 0;
 }
