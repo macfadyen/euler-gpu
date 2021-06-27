@@ -12,7 +12,7 @@
 #define NCONS 4                // number of conserved variables
 #define NK 3                   // number of basis polynomials
 #define NQFACE 2               // number of quadrature points per face
-#define NQCELL 4               // number of cell quadrature points
+#define NQCELL 4               // number of quadrature points per cell
 
 typedef double real;
 #define square_root sqrt
@@ -529,6 +529,7 @@ int main()
         printf("[%d] t=%.3e Mzps=%.2f Mnps=%.2f\n", iteration, time, mzps, mnps);
     }
 
+    update_struct_get_conserved(update, conserved);
     update_struct_del(update);
 
     FILE* outfile = fopen("euler2d.dat", "w");
