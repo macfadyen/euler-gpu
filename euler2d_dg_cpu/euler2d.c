@@ -18,6 +18,51 @@ typedef double real;
 #define power pow
 #endif
 
+#define NDIM 2
+#define DG_ORDER 1
+#define NFACE 3
+#define NNODE 9
+#define NK    1  // number of basis polynomials
+#define NCONS 4  // number of conserved variables
+
+// global array of node stencil
+
+double node[NNODE][NK + NDIM * NK + 1];
+
+void set_node(void)
+{
+
+    // Legendre polynomials scaled by sqrt(n^2 + 1)
+
+    // n = 0
+    
+    real nhat;
+    real leg0   = 1.0;
+    real dxleg0 = 0.0; // x derivative of leg0
+    real dyleg0 = 0.0; // y derivative of leg0
+
+    for (int i = 0; i < NFACE; ++i)
+    {
+        for (int j = 0; j < NFACE; ++j)
+        {   
+            if ((i == 0) || (j == 0))
+            {
+                nhat = -1.0;
+            } 
+            else
+            {
+                nhat =  1.0;
+            }
+    
+            node[i * NFACE + j][0] = leg0;
+            node[i * NFACE + j][1] = dxleg0;
+            node[i * NFACE + j][2] = dyleg0;
+            node[i * NFACE + j][3] = 1.0 * nhat;   // Gaussian weight * nhat
+        }
+    }
+}
+
+
 void conserved_to_primitive(const real *cons, real *prim)
 {
     const real rho = cons[0];
@@ -118,7 +163,7 @@ void riemann_hlle(const real *pl, const real *pr, real *flux, int direction)
     }
 }
 
-void initial_primitive(real *primitive, int ni, int nj, real x0, real x1, real y0, real y1)
+void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, real y1)
 {
     real dx = (x1 - x0) / ni;
     real dy = (y1 - y0) / nj;
@@ -129,27 +174,31 @@ void initial_primitive(real *primitive, int ni, int nj, real x0, real x1, real y
         {
             real x = (i + 0.5) * dx;
             real y = (j + 0.5) * dy;
-            real *prim = &primitive[4 * (i * nj + j)];
+            real *wij = &weights[NCONS * NK * (i * nj + j)];
             real r2 = power(x - 0.5, 2) + power(y - 0.5, 2);
-            prim[0] = 1.0;
-            prim[1] = 0.0;
-            prim[2] = 0.0;
-            prim[3] = 1.0*exp(-r2/0.01);
+
             /*
-            if (square_root(r2) < 0.125)
+            cw[0 * NK] = 1.0;
+            cw[1 * NK] = 0.0;
+            cw[2 * NK] = 0.0;
+            cw[3 * NK] = 1.0 * exp(-r2/0.01);
+            */
+
+            //if (square_root(r2) < 0.125)
+            if (x < 0.5)    
             {
-                prim[0] = 1.0;
-                prim[1] = 0.0;
-                prim[2] = 0.0;
-                prim[3] = 1.0;
+                wij[0] = 1.0;
+                wij[1] = 0.0;
+                wij[2] = 0.0;
+                wij[3] = 1.0;
             }
             else
             {
-                prim[0] = 0.1;
-                prim[1] = 0.0;
-                prim[2] = 0.0;
-                prim[3] = 0.125;
-            }*/
+                wij[0] = 0.1;
+                wij[1] = 0.0;
+                wij[2] = 0.0;
+                wij[3] = 0.125;
+            }
         }
     }
 }
@@ -162,10 +211,8 @@ struct UpdateStruct
     real x1;
     real y0;
     real y1;
-    real *primitive;
-    real *conserved;
-    real *flux_i;
-    real *flux_j;
+
+    real *weights;
 };
 
 struct UpdateStruct update_struct_new(int ni, int nj, real x0, real x1, real y0, real y1)
@@ -178,73 +225,63 @@ struct UpdateStruct update_struct_new(int ni, int nj, real x0, real x1, real y0,
     update.y0 = y0;
     update.y1 = y1;
 
-    update.primitive = (real*) malloc(ni * nj * 4 * sizeof(real));
-    update.conserved = (real*) malloc(ni * nj * 4 * sizeof(real));
-    update.flux_i = (real*) malloc((ni + 1) * nj * 4 * sizeof(real));
-    update.flux_j = (real*) malloc(ni * (nj + 1) * 4 * sizeof(real));
+    update.weights = (real*) malloc(ni * nj * NCONS * NK * sizeof(real));
 
     return update;
 }
 
 void update_struct_del(struct UpdateStruct update)
 {
-    free(update.primitive);
-    free(update.conserved);
-    free(update.flux_i);
-    free(update.flux_j);
+    free(update.weights);
 }
 
-void update_struct_set_primitive(struct UpdateStruct update, const real *primitive_host)
+void update_struct_set_weights(struct UpdateStruct update, const real *weights_host)
 {
     int ni = update.ni;
     int nj = update.nj;
     int num_zones = ni * nj;
-    real *conserved_host = (real*) malloc(num_zones * 4 * sizeof(real));
+
+    memcpy(
+        update.weights,
+        weights_host,
+        num_zones * NCONS * NK * sizeof(real)
+    );
+}
+
+void update_struct_get_weights(struct UpdateStruct update, real *weights_host)
+{
+    int num_zones = update.ni * update.nj;
+    memcpy(weights_host,
+        update.weights,
+        num_zones * NCONS * NK * sizeof(real)
+    );
+}
+
+
+void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
+{
+    int ni = update.ni;
+    int nj = update.nj;
+    const real dx = (update.x1 - update.x0) / update.ni;
+    const real dy = (update.y1 - update.y0) / update.nj;
+
+    real consm[NCONS];
+    real consp[NCONS];
+    real primm[NCONS];
+    real primp[NCONS];
+    real flux [NCONS];
+
+    real surface[NCONS][NK];
+    real volume [NCONS][NK];
 
     for (int i = 0; i < ni; ++i)
     {
         for (int j = 0; j < nj; ++j)
         {
-            const real *prim = &primitive_host[4 * (i * nj + j)];
-            /* */ real *cons = &conserved_host[4 * (i * nj + j)];
-            primitive_to_conserved(prim, cons);
-        }
-    }
-
-    memcpy(
-        update.primitive,
-        primitive_host,
-        num_zones * 4 * sizeof(real)
-    );
-
-    memcpy(
-        update.conserved,
-        conserved_host,
-        num_zones * 4 * sizeof(real)
-    );
-    free(conserved_host);
-}
-
-void update_struct_get_primitive(struct UpdateStruct update, real *primitive_host)
-{
-    int num_zones = update.ni * update.nj;
-    memcpy(primitive_host,
-        update.primitive,
-        num_zones * 4 * sizeof(real)
-    );
-}
-
-void update_struct_do_compute_flux(struct UpdateStruct update)
-{
-    int ni = update.ni;
-    int nj = update.nj;
-
-    for (int i = 0; i < ni + 1; ++i)
-    {
-        for (int j = 0; j < nj; ++j)
-        {
             int il = i - 1;
-            int ir = i;
+            int ir = i + 1;
+            int jl = j - 1;
+            int jr = j + 1;
 
             if (il == -1)
                 il += 1;
@@ -252,69 +289,96 @@ void update_struct_do_compute_flux(struct UpdateStruct update)
             if (ir == ni)
                 ir -= 1;
 
-            const real *pl = &update.primitive[4 * (il * nj + j)];
-            const real *pr = &update.primitive[4 * (ir * nj + j)];
-
-            real *flux = &update.flux_i[4 * (i * nj + j)];
-            riemann_hlle(pl, pr, flux, 0);
-        }
-    }
-
-    for (int i = 0; i < ni; ++i)
-    {
-        for (int j = 0; j < nj + 1; ++j)
-        {
-            int jl = j - 1;
-            int jr = j;
-
             if (jl == -1)
                 jl += 1;
 
             if (jr == nj)
                 jr -= 1;
 
-            const real *pl = &update.primitive[4 * (i * nj + jl)];
-            const real *pr = &update.primitive[4 * (i * nj + jr)];
+            /* */ real *wij = &update.weights[NCONS * NK * (i  * nj + j )];
 
-            real *flux = &update.flux_j[4 * (i * nj + j)];
-            riemann_hlle(pl, pr, flux, 1);
-        }
-    }
-}
+            const real *wli = &update.weights[NCONS * NK * (il * nj + j )];
+            const real *wri = &update.weights[NCONS * NK * (ir * nj + j )];
+            const real *wlj = &update.weights[NCONS * NK * (i  * nj + jl)];
+            const real *wrj = &update.weights[NCONS * NK * (i  * nj + jr)];
 
-void update_struct_do_advance_cons(struct UpdateStruct update, real dt)
-{
-    int ni = update.ni;
-    int nj = update.nj;
-    const real dx = (update.x1 - update.x0) / update.ni;
-    const real dy = (update.y1 - update.y0) / update.nj;
+            memset(surface, 0.0, NCONS * NK * sizeof(real));
+            memset(volume,  0.0, NCONS * NK * sizeof(real));    
 
-    for (int i = 0; i < ni; ++i)
-    {
-        for (int j = 0; j < nj; ++j)
-        {
-            const real *fli = &update.flux_i[4 * ((i + 0) * nj + j)];
-            const real *fri = &update.flux_i[4 * ((i + 1) * nj + j)];
-            const real *flj = &update.flux_j[4 * (i * nj + (j + 0))];
-            const real *frj = &update.flux_j[4 * (i * nj + (j + 1))];
-
-            real *cons = &update.conserved[4 * (i * nj + j)];
-            real *prim = &update.primitive[4 * (i * nj + j)];
-
-            for (int q = 0; q < 4; ++q)
+            // Left Face
+            for (int nq = 1; nq < (NFACE - 1); ++nq)
             {
-                cons[q] -= ((fri[q] - fli[q]) / dx + (frj[q] - flj[q]) / dy) * dt;
+                for (int q = 0; q < NCONS; ++q)
+                {
+                    consm[q] = 0.0;
+                    consp[q] = 0.0;
+
+                    for (int l = 0; l < NK; ++l)
+                    {
+                        consm[q] += wli[ NK * q + l] * node[nq + (NFACE - 1) * NFACE][l]; // right face of zone i -1 
+                        consp[q] += wij[ NK * q + l] * node[nq][l]; // left face of zone i                     
+                    }
+                }
+
+                conserved_to_primitive(consm, primm);
+                conserved_to_primitive(consp, primp);
+                riemann_hlle(primm, primp, flux, 0);
+
+                for (int q = 0; q < NCONS; ++q)
+                {
+                    for (int l = 0; l < NK; ++l)
+                    {
+                        surface[q][l] += flux[q] * node[nq][l] * node[nq][NK + NDIM * NK];  
+                    }
+                }
             }
-            conserved_to_primitive(cons, prim);
+
+            // Right Face
+            for (int nq = 1; nq < (NFACE - 1); ++nq)
+            {
+                for (int q = 0; q < NCONS; ++q)
+                {
+                    consm[q] = 0.0;
+                    consp[q] = 0.0;
+
+                    for (int l = 0; l < NK; ++l)
+                    {
+                        consm[q] += wij[ NK * q + l] * node[nq + (NFACE - 1) * NFACE][l]; // right face of zone i
+                        consp[q] += wri[ NK * q + l] * node[nq][l];                       // left face of zone i+1
+                    }
+                }
+
+                conserved_to_primitive(consm, primm);
+                conserved_to_primitive(consp, primp);
+                riemann_hlle(primm, primp, flux, 0);
+
+                for (int q = 0; q < NCONS; ++q)
+                {
+                    for (int l = 0; l < NK; ++l)
+                    {
+                        surface[q][l] += flux[q] * node[NK * (NK-1) + nq][l] * node[NK * (NK-1) + nq][NK + NDIM * NK];  
+                    }
+                } 
+
+            }
+
+            for (int q = 0; q < NCONS; ++q)
+            {
+                for (int l = 0; l < NK; ++l)
+                {
+                    wij[ NK * q + l] += (0.0 - surface[q][l]) * dt / dx; 
+                }
+            }
+
         }
     }
 }
 
 int main()
 {
-    const int ni = 512;
-    const int nj = 512;
-    const int fold = 10;
+    const int ni = 16;
+    const int nj = 16;
+    const int fold = 1;
     const real x0 = 0.0;
     const real x1 = 1.0;
     const real y0 = 0.0;
@@ -322,24 +386,25 @@ int main()
     const real dx = (x1 - x0) / ni;
     const real dy = (y1 - y0) / nj;
 
-    real *primitive = (real*) malloc(ni * nj * 4 * sizeof(real));
+    set_node();
+
+    real *weights_host = (real*) malloc(ni * nj * NCONS * NK * sizeof(real));
     struct UpdateStruct update = update_struct_new(ni, nj, x0, x1, y0, y1);
 
-    initial_primitive(primitive, ni, nj, x0, x1, y0, y1);
-    update_struct_set_primitive(update, primitive);
+    initial_weights(weights_host, ni, nj, x0, x1, y0, y1);
+    update_struct_set_weights(update, weights_host);
 
     int iteration = 0;
     real time = 0.0;
     real dt = min2(dx, dy) * 0.05;
 
-    while (time < 0.1)
+    while (time < 0.0)
     {
         clock_t start = clock();
 
         for (int i = 0; i < fold; ++i)
         {
-            update_struct_do_compute_flux(update);
-            update_struct_do_advance_cons(update, dt);
+            update_struct_do_advance_weights(update, dt);
 
             time += dt;
             iteration += 1;
@@ -351,7 +416,7 @@ int main()
         printf("[%d] t=%.3e Mzps=%.2f\n", iteration, time, mzps);
     }
 
-    update_struct_get_primitive(update, primitive);
+    update_struct_get_weights(update, weights_host);
     update_struct_del(update);
 
     FILE* outfile = fopen("euler2d.dat", "w");
@@ -360,13 +425,13 @@ int main()
     {
         for (int j = 0; j < nj; ++j)
         {
-            real *prim = &primitive[4 * (i * nj + j)];
+            real *wij = &weights_host[NCONS * NK * (i * nj + j)];
             real x = (i + 0.5) * dx;
             real y = (j + 0.5) * dy;
-            fprintf(outfile, "%f %f %f %f %f %f\n", x, y, prim[0], prim[1], prim[2], prim[3]);
+            fprintf(outfile, "%f %f %f %f %f %f\n", x, y, wij[0*NK], wij[1*NK], wij[2*NK], wij[3*NK]);
         }
     }
     fclose(outfile);
-    free(primitive);
+    free(weights_host);
     return 0;
 }

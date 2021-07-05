@@ -7,6 +7,6 @@ x, y, rho, vx, vy, pre = np.loadtxt(sys.argv[1]).T
 ni, nj = [math.isqrt(len(x))] * 2
 x, y, rho, vx, vy, pre = [a.reshape([ni, nj]) for a in [x, y, rho, vx, vy, pre]]
 
-plt.plot(rho[256,:])
-#plt.imshow(rho)
+#plt.plot(rho[:,3])
+plt.imshow(rho)
 plt.show()
