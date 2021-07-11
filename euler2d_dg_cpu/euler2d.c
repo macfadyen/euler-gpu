@@ -20,48 +20,97 @@ typedef double real;
 
 #define NDIM 2
 #define DG_ORDER 1
-#define NFACE 3
-#define NNODE 9
+#define NFACE 1
+#define NCELL 1
 #define NK    1  // number of basis polynomials
 #define NCONS 4  // number of conserved variables
 
-// global array of node stencil
+struct Cells cell;
 
-double node[NNODE][NK + NDIM * NK + 1];
-
-void set_node(void)
+struct Cells
 {
-
     // Legendre polynomials scaled by sqrt(n^2 + 1)
 
     // n = 0
     
+    /*
     real nhat;
     real leg0   = 1.0;
     real dxleg0 = 0.0; // x derivative of leg0
     real dyleg0 = 0.0; // y derivative of leg0
-
-    for (int i = 0; i < NFACE; ++i)
+    */
+    struct Nodes
     {
-        for (int j = 0; j < NFACE; ++j)
+        real phi[NK];
+        real dphidx[NK];
+        real dphidy[NK];
+        real gw;
+    };
+
+    struct Nodes node[NCELL];
+    struct Nodes faceli[NFACE]; // left face nodes
+    struct Nodes faceri[NFACE]; // right face nodes
+    struct Nodes facelj[NFACE]; // bottom face nodes
+    struct Nodes facerj[NFACE]; // top face nodes   
+
+};
+
+struct Cells set_cell(void)
+{
+    struct Cells cell;
+
+    // Legendre polynomials scaled by sqrt(n^2 + 1)
+
+    // n = 0
+    real nhat;
+    real leg0   = 1.0;
+    real dleg0dx = 0.0; // x derivative of leg0
+    real dleg0dy = 0.0; // y derivative of leg0
+
+    // cell nodes
+
+    int nc = 0;
+
+    for (int i = 0; i < 1; ++i)
+    {
+        for (int j = 0; j < 1; ++j)
         {   
-            if ((i == 0) || (j == 0))
-            {
-                nhat = -1.0;
-            } 
-            else
-            {
-                nhat =  1.0;
-            }
-    
-            node[i * NFACE + j][0] = leg0;
-            node[i * NFACE + j][1] = dxleg0;
-            node[i * NFACE + j][2] = dyleg0;
-            node[i * NFACE + j][3] = 1.0 * nhat;   // Gaussian weight * nhat
+            cell.node[nc].phi[0]    = leg0;
+            cell.node[nc].dphidx[0] = dleg0dx;
+            cell.node[nc].dphidy[0] = dleg0dy;
+            cell.node[nc].gw = 1.0;   // 2D Gaussian weight
+
+            ++nc;
         }
     }
-}
 
+    // face nodes
+
+    for (int n = 0; n < 1; ++n)
+    {
+        // left face
+        cell.faceli[n].phi[0]    = leg0;
+        cell.faceli[n].dphidx[0] = dleg0dx;
+        cell.faceli[n].dphidy[0] = dleg0dy;
+        cell.faceli[n].gw = 1.0 * (-1.0); // 1D Gaussian weight * nhat
+        // right face
+        cell.faceri[n].phi[0]    = leg0;
+        cell.faceri[n].dphidx[0] = dleg0dx;
+        cell.faceri[n].dphidy[0] = dleg0dy;
+        cell.faceri[n].gw = 1.0 *  (1.0); // 1D Gaussian weight * nhat   
+        // bottom face
+        cell.facelj[n].phi[0]    = leg0;
+        cell.facelj[n].dphidx[0] = dleg0dx;
+        cell.facelj[n].dphidy[0] = dleg0dy;
+        cell.facelj[n].gw = 1.0 * (-1.0); // 1D Gaussian weight * nhat
+        // top face
+        cell.facerj[n].phi[0]    = leg0;
+        cell.facerj[n].dphidx[0] = dleg0dx;
+        cell.facerj[n].dphidy[0] = dleg0dy;
+        cell.facerj[n].gw = 1.0 *  (1.0); // 1D Gaussian weight * nhat 
+    }
+    return cell;
+}
 
 void conserved_to_primitive(const real *cons, real *prim)
 {
@@ -185,7 +234,7 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
             */
 
             //if (square_root(r2) < 0.125)
-            if (x < 0.5)    
+            if (y < 0.5)    
             {
                 wij[0] = 1.0;
                 wij[1] = 0.0;
@@ -202,6 +251,7 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
         }
     }
 }
+
 
 struct UpdateStruct
 {
@@ -270,9 +320,9 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
     real primm[NCONS];
     real primp[NCONS];
     real flux [NCONS];
-
-    real surface[NCONS][NK];
-    real volume [NCONS][NK];
+    
+    real *delta_weights = (real*) malloc(ni * nj * NCONS * NK * sizeof(real));
+    real dw[ni][nj][NCONS][NK];
 
     for (int i = 0; i < ni; ++i)
     {
@@ -301,83 +351,160 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
             const real *wri = &update.weights[NCONS * NK * (ir * nj + j )];
             const real *wlj = &update.weights[NCONS * NK * (i  * nj + jl)];
             const real *wrj = &update.weights[NCONS * NK * (i  * nj + jr)];
-
-            memset(surface, 0.0, NCONS * NK * sizeof(real));
-            memset(volume,  0.0, NCONS * NK * sizeof(real));    
-
-            // Left Face
-            for (int nq = 1; nq < (NFACE - 1); ++nq)
-            {
-                for (int q = 0; q < NCONS; ++q)
-                {
-                    consm[q] = 0.0;
-                    consp[q] = 0.0;
-
-                    for (int l = 0; l < NK; ++l)
-                    {
-                        consm[q] += wli[ NK * q + l] * node[nq + (NFACE - 1) * NFACE][l]; // right face of zone i -1 
-                        consp[q] += wij[ NK * q + l] * node[nq][l]; // left face of zone i                     
-                    }
-                }
-
-                conserved_to_primitive(consm, primm);
-                conserved_to_primitive(consp, primp);
-                riemann_hlle(primm, primp, flux, 0);
-
-                for (int q = 0; q < NCONS; ++q)
-                {
-                    for (int l = 0; l < NK; ++l)
-                    {
-                        surface[q][l] += flux[q] * node[nq][l] * node[nq][NK + NDIM * NK];  
-                    }
-                }
-            }
-
-            // Right Face
-            for (int nq = 1; nq < (NFACE - 1); ++nq)
-            {
-                for (int q = 0; q < NCONS; ++q)
-                {
-                    consm[q] = 0.0;
-                    consp[q] = 0.0;
-
-                    for (int l = 0; l < NK; ++l)
-                    {
-                        consm[q] += wij[ NK * q + l] * node[nq + (NFACE - 1) * NFACE][l]; // right face of zone i
-                        consp[q] += wri[ NK * q + l] * node[nq][l];                       // left face of zone i+1
-                    }
-                }
-
-                conserved_to_primitive(consm, primm);
-                conserved_to_primitive(consp, primp);
-                riemann_hlle(primm, primp, flux, 0);
-
-                for (int q = 0; q < NCONS; ++q)
-                {
-                    for (int l = 0; l < NK; ++l)
-                    {
-                        surface[q][l] += flux[q] * node[NK * (NK-1) + nq][l] * node[NK * (NK-1) + nq][NK + NDIM * NK];  
-                    }
-                } 
-
-            }
+   
+            real *dwij = &delta_weights[NCONS * NK * (i  * nj + j )];
 
             for (int q = 0; q < NCONS; ++q)
             {
                 for (int l = 0; l < NK; ++l)
                 {
-                    wij[ NK * q + l] += (0.0 - surface[q][l]) * dt / dx; 
+                    dwij[NK * q + l] = 0.0;
+                    dw[i][j][q][l] = 0.0;
                 }
             }
 
+            // Left Face
+            for (int n = 0; n < NFACE; ++n)
+            {
+                for (int q = 0; q < NCONS; ++q)
+                {
+                    consm[q] = 0.0;
+                    consp[q] = 0.0;
+
+                    for (int l = 0; l < NK; ++l)
+                    {
+                        consm[q] += wli[NK * q + l] * cell.faceri[n].phi[l]; // right face of zone i -1 
+                        consp[q] += wij[NK * q + l] * cell.faceli[n].phi[l]; // left face of zone i                     
+                    }
+                }
+
+                conserved_to_primitive(consm, primm);
+                conserved_to_primitive(consp, primp);
+                
+                riemann_hlle(primm, primp, flux, 0);
+
+                for (int q = 0; q < NCONS; ++q)
+                {
+                    for (int l = 0; l < NK; ++l)
+                    {
+                        dwij[NK * q + l] -= flux[q] * cell.faceli[n].phi[l] * cell.faceli[n].gw;  
+                    }
+                }
+            }
+
+            // Right Face
+            for (int n = 0; n < NFACE; ++n)
+            {
+                for (int q = 0; q < NCONS; ++q)
+                {
+                    consm[q] = 0.0;
+                    consp[q] = 0.0;
+
+                    for (int l = 0; l < NK; ++l)
+                    {
+                        consm[q] += wij[NK * q + l] * cell.faceri[n].phi[l]; // right face of zone i  
+                        consp[q] += wri[NK * q + l] * cell.faceli[n].phi[l]; // left face of zone i + 1                     
+                    }
+                }
+
+                conserved_to_primitive(consm, primm);
+                conserved_to_primitive(consp, primp);
+                
+                riemann_hlle(primm, primp, flux, 0);
+
+                for (int q = 0; q < NCONS; ++q)
+                {
+                    for (int l = 0; l < NK; ++l)
+                    {
+                        dwij[NK * q + l] -= flux[q] * cell.faceri[n].phi[l] * cell.faceri[n].gw;
+                    }
+                }
+            }
+
+            // Bottom Face
+            for (int n = 0; n < NFACE; ++n)
+            {
+                for (int q = 0; q < NCONS; ++q)
+                {
+                    consm[q] = 0.0;
+                    consp[q] = 0.0;
+
+                    for (int l = 0; l < NK; ++l)
+                    {
+                        consm[q] += wlj[NK * q + l] * cell.facerj[n].phi[l]; // top face of zone j-1 
+                        consp[q] += wij[NK * q + l] * cell.facelj[n].phi[l]; // bottom face of zone j                     
+                    }
+                }
+
+                conserved_to_primitive(consm, primm);
+                conserved_to_primitive(consp, primp);
+                
+                riemann_hlle(primm, primp, flux, 0);
+
+                for (int q = 0; q < NCONS; ++q)
+                {
+                    for (int l = 0; l < NK; ++l)
+                    {
+                        dwij[NK * q + l] -= flux[q] * cell.facelj[n].phi[l] * cell.facelj[n].gw;  
+                    }
+                }
+            }
+
+            // Top Face
+            for (int n = 0; n < NFACE; ++n)
+            {
+                for (int q = 0; q < NCONS; ++q)
+                {
+                    consm[q] = 0.0;
+                    consp[q] = 0.0;
+
+                    for (int l = 0; l < NK; ++l)
+                    {
+                        consm[q] += wij[NK * q + l] * cell.facerj[n].phi[l]; // top face of zone j  
+                        consp[q] += wrj[NK * q + l] * cell.facelj[n].phi[l]; // bottom face of zone j + 1                     
+                    }
+                }
+
+                conserved_to_primitive(consm, primm);
+                conserved_to_primitive(consp, primp);
+                
+                riemann_hlle(primm, primp, flux, 0);
+
+                for (int q = 0; q < NCONS; ++q)
+                {
+                    for (int l = 0; l < NK; ++l)
+                    {
+                        dwij[NK * q + l] -= flux[q] * cell.facerj[n].phi[l] * cell.facerj[n].gw;  
+                    }
+                }
+            } 
         }
     }
+
+    for (int i = 0; i < ni; ++i)
+    {
+        for (int j = 0; j < nj; ++j)
+        {
+            real *wij = &update.weights[NCONS * NK * (i  * nj + j )];
+            real *dwij = &delta_weights[NCONS * NK * (i  * nj + j )];
+
+            for (int q = 0; q < NCONS; ++q)
+            {
+                for (int l = 0; l < NK; ++l)
+                {
+                    wij[ NK * q + l] += dwij[NK * q + l] * dt / dx; 
+                }
+            }
+        }
+
+    }
+    free(delta_weights);
 }
 
 int main()
 {
-    const int ni = 16;
-    const int nj = 16;
+    const int ni = 128;
+    const int nj = 128;
     const int fold = 1;
     const real x0 = 0.0;
     const real x1 = 1.0;
@@ -386,7 +513,7 @@ int main()
     const real dx = (x1 - x0) / ni;
     const real dy = (y1 - y0) / nj;
 
-    set_node();
+    cell = set_cell();
 
     real *weights_host = (real*) malloc(ni * nj * NCONS * NK * sizeof(real));
     struct UpdateStruct update = update_struct_new(ni, nj, x0, x1, y0, y1);
@@ -398,7 +525,7 @@ int main()
     real time = 0.0;
     real dt = min2(dx, dy) * 0.05;
 
-    while (time < 0.0)
+    while (time < 0.1)
     {
         clock_t start = clock();
 
