@@ -5,6 +5,7 @@
 #include <stdlib.h>
 
 #define ADIABATIC_GAMMA (5.0 / 3.0)
+#define PI 3.14159265359
 #define min2(a, b) (a) < (b) ? (a) : (b)
 #define max2(a, b) (a) > (b) ? (a) : (b)
 
@@ -19,10 +20,10 @@ typedef double real;
 #endif
 
 #define NDIM 2
-#define DG_ORDER 2
-#define NFACE 2
-#define NCELL 4
-#define NK    3  // number of basis polynomials
+#define DG_ORDER 1
+#define NFACE 1
+#define NCELL 1
+#define NK    1  // number of basis polynomials
 #define NCONS 4  // number of conserved variables
 
 struct Cells cell;
@@ -45,7 +46,7 @@ struct Cells
 
 };
 
-// Legendre polynomials scaled by sqrt(2n+1) and their derivatives
+// Legendre polynomials scaled by sqrt(2n+1), and their derivatives
 
 real p0(const real xsi)
 {
@@ -93,10 +94,16 @@ struct Cells set_cell(void)
 
     real nhat;
 
-    // Second order
-    real xsi[NFACE] = {-1.0/sqrt(3.0), 1.0/sqrt(3.0)};
-    real gw[NFACE]  = {1.0, 1.0}; // Gaussian weight
-
+    #if (DG_ORDER == 1)
+        real xsi[NFACE] = {0.0};
+        real gw[NFACE]  = {2.0}; // 1D Gaussian weight       
+    #elif (DG_ORDER == 2)
+        real xsi[NFACE] = {-1.0/sqrt(3.0), 1.0/sqrt(3.0)};
+        real gw[NFACE]  = {1.0, 1.0}; // 1D Gaussian weight
+    #elif (DG_ORDER == 3)
+        real xsi[NFACE] = {-sqrt(3.0/5.0), 0.0, sqrt(3.0/5.0)};
+        real gw[NFACE]  = {5.0/9.0, 8.0/9.0, 5.0/9.0}; // 1D Gaussian weight
+    #endif
     // cell nodes
 
     int nc = 0;
@@ -109,20 +116,33 @@ struct Cells set_cell(void)
             cell.node[nc].phi[0]    = p0(xsi[i]) * p0(xsi[j]);
             cell.node[nc].dphidx[0] = p0_prime(xsi[i]) * p0(xsi[j]);
             cell.node[nc].dphidy[0] = p0(xsi[i]) * p0_prime(xsi[j]);
-
+            #if (DG_ORDER >= 2)
             // nk = 1
-            cell.node[nc].phi[1]    = p1(xsi[i]) * p0(xsi[j]);
-            cell.node[nc].dphidx[1] = p1_prime(xsi[i]) * p0(xsi[j]);
-            cell.node[nc].dphidy[1] = p1(xsi[i]) * p0_prime(xsi[j]);
-
+            cell.node[nc].phi[1]    = p0(xsi[i]) * p1(xsi[j]);
+            cell.node[nc].dphidx[1] = p0_prime(xsi[i]) * p1(xsi[j]);
+            cell.node[nc].dphidy[1] = p0(xsi[i]) * p1_prime(xsi[j]);
             // nk = 2
-            cell.node[nc].phi[2]    = p0(xsi[i]) * p1(xsi[j]);
-            cell.node[nc].dphidx[2] = p0_prime(xsi[i]) * p1(xsi[j]);
-            cell.node[nc].dphidy[2] = p0(xsi[i]) * p1_prime(xsi[j]);
-
+            cell.node[nc].phi[2]    = p1(xsi[i]) * p0(xsi[j]);
+            cell.node[nc].dphidx[2] = p1_prime(xsi[i]) * p0(xsi[j]);
+            cell.node[nc].dphidy[2] = p1(xsi[i]) * p0_prime(xsi[j]);
+            #endif
+            #if (DG_ORDER >= 3)
+            // nk = 3
+            cell.node[nc].phi[3]    = p0(xsi[i]) * p2(xsi[j]);
+            cell.node[nc].dphidx[3] = p0_prime(xsi[i]) * p2(xsi[j]);
+            cell.node[nc].dphidy[3] = p0(xsi[i]) * p2_prime(xsi[j]);
+            // nk = 4
+            cell.node[nc].phi[4]    = p1(xsi[i]) * p1(xsi[j]);
+            cell.node[nc].dphidx[4] = p1_prime(xsi[i]) * p1(xsi[j]);
+            cell.node[nc].dphidy[4] = p1(xsi[i]) * p1_prime(xsi[j]); 
+            // nk = 5
+            cell.node[nc].phi[5]    = p2(xsi[i]) * p0(xsi[j]);
+            cell.node[nc].dphidx[5] = p2_prime(xsi[i]) * p0(xsi[j]);
+            cell.node[nc].dphidy[5] = p2(xsi[i]) * p0_prime(xsi[j]);                       
+            #endif
             cell.node[nc].gw = gw[i] * gw[j];   // 2D Gaussian weight
 
-            ++nc;
+            nc = nc + 1;
         }
     }
 
@@ -131,19 +151,34 @@ struct Cells set_cell(void)
     for (int n = 0; n < NFACE; ++n)
     {
         // left face (x = -1)
-
+        // nk = 0
         cell.faceli[n].phi[0]    = p0(-1.0) * p0(xsi[n]);
         cell.faceli[n].dphidx[0] = p0_prime(-1.0) * p0(xsi[n]);
         cell.faceli[n].dphidy[0] = p0(-1.0) * p0_prime(xsi[n]);
-
-        cell.faceli[n].phi[1]    = p1(-1.0) * p0(xsi[n]);
-        cell.faceli[n].dphidx[1] = p1_prime(-1.0) * p0(xsi[n]);
-        cell.faceli[n].dphidy[1] = p1(-1.0) * p0_prime(xsi[n]);
-
-        cell.faceli[n].phi[2]    = p0(-1.0) * p1(xsi[n]);
-        cell.faceli[n].dphidx[2] = p0_prime(-1.0) * p1(xsi[n]);
-        cell.faceli[n].dphidy[2] = p0(-1.0) * p1_prime(xsi[n]);
-
+        #if (DG_ORDER >= 2)
+        // nk = 1
+        cell.faceli[n].phi[1]    = p0(-1.0) * p1(xsi[n]);
+        cell.faceli[n].dphidx[1] = p0_prime(-1.0) * p1(xsi[n]);
+        cell.faceli[n].dphidy[1] = p0(-1.0) * p1_prime(xsi[n]);
+        // nk = 2
+        cell.faceli[n].phi[2]    = p1(-1.0) * p0(xsi[n]);
+        cell.faceli[n].dphidx[2] = p1_prime(-1.0) * p0(xsi[n]);
+        cell.faceli[n].dphidy[2] = p1(-1.0) * p0_prime(xsi[n]);
+        #endif
+        #if (DG_ORDER >= 3)
+        // nk = 3
+        cell.node[nc].phi[3]    = p0(-1.0) * p2(xsi[n]);
+        cell.node[nc].dphidx[3] = p0_prime(-1.0) * p2(xsi[n]);
+        cell.node[nc].dphidy[3] = p0(-1.0) * p2_prime(xsi[n]);
+        // nk = 4
+        cell.node[nc].phi[4]    = p1(-1.0) * p1(xsi[n]);
+        cell.node[nc].dphidx[4] = p1_prime(-1.0) * p1(xsi[n]);
+        cell.node[nc].dphidy[4] = p1(-1.0) * p1_prime(xsi[n]); 
+        // nk = 5
+        cell.node[nc].phi[5]    = p2(-1.0) * p0(xsi[n]);
+        cell.node[nc].dphidx[5] = p2_prime(-1.0) * p0(xsi[n]);
+        cell.node[nc].dphidy[5] = p2(-1.0) * p0_prime(xsi[n]);                       
+        #endif
         cell.faceli[n].gw = gw[n] * (-1.0); // 1D Gaussian weight * nhat
 
         // right face (x = +1)
@@ -151,14 +186,29 @@ struct Cells set_cell(void)
         cell.faceri[n].phi[0]    = p0(1.0) * p0(xsi[n]);
         cell.faceri[n].dphidx[0] = p0_prime(1.0) * p0(xsi[n]);
         cell.faceri[n].dphidy[0] = p0(1.0) * p0_prime(xsi[n]);
+        #if (DG_ORDER >= 2)
+        cell.faceri[n].phi[1]    = p0(1.0) * p1(xsi[n]);
+        cell.faceri[n].dphidx[1] = p0_prime(1.0) * p1(xsi[n]);
+        cell.faceri[n].dphidy[1] = p0(1.0) * p1_prime(xsi[n]);
 
-        cell.faceri[n].phi[1]    = p1(1.0) * p0(xsi[n]);
-        cell.faceri[n].dphidx[1] = p1_prime(1.0) * p0(xsi[n]);
-        cell.faceri[n].dphidy[1] = p1(1.0) * p0_prime(xsi[n]);
-
-        cell.faceri[n].phi[2]    = p0(1.0) * p1(xsi[n]);
-        cell.faceri[n].dphidx[2] = p0_prime(1.0) * p1(xsi[n]);
-        cell.faceri[n].dphidy[2] = p0(1.0) * p1_prime(xsi[n]);
+        cell.faceri[n].phi[2]    = p1(1.0) * p0(xsi[n]);
+        cell.faceri[n].dphidx[2] = p1_prime(1.0) * p0(xsi[n]);
+        cell.faceri[n].dphidy[2] = p1(1.0) * p0_prime(xsi[n]);
+        #endif
+        #if (DG_ORDER >= 3)
+        // nk = 3
+        cell.node[nc].phi[3]    = p0(1.0) * p2(xsi[n]);
+        cell.node[nc].dphidx[3] = p0_prime(1.0) * p2(xsi[n]);
+        cell.node[nc].dphidy[3] = p0(1.0) * p2_prime(xsi[n]);
+        // nk = 4
+        cell.node[nc].phi[4]    = p1(1.0) * p1(xsi[n]);
+        cell.node[nc].dphidx[4] = p1_prime(1.0) * p1(xsi[n]);
+        cell.node[nc].dphidy[4] = p1(1.0) * p1_prime(xsi[n]); 
+        // nk = 5
+        cell.node[nc].phi[5]    = p2(1.0) * p0(xsi[n]);
+        cell.node[nc].dphidx[5] = p2_prime(1.0) * p0(xsi[n]);
+        cell.node[nc].dphidy[5] = p2(1.0) * p0_prime(xsi[n]);                       
+        #endif
 
         cell.faceri[n].gw = gw[n] * (1.0); // 1D Gaussian weight * nhat
 
@@ -167,14 +217,29 @@ struct Cells set_cell(void)
         cell.facelj[n].phi[0]    = p0(xsi[n]) * p0(-1.0);
         cell.facelj[n].dphidx[0] = p0_prime(xsi[n]) * p0(-1.0);
         cell.facelj[n].dphidy[0] = p0(xsi[n]) * p0_prime(-1.0);
+        #if (DG_ORDER >= 2)
+        cell.facelj[n].phi[1]    = p0(xsi[n]) * p1(-1.0);
+        cell.facelj[n].dphidx[1] = p0_prime(xsi[n]) * p1(-1.0);
+        cell.facelj[n].dphidy[1] = p0(xsi[n]) * p1_prime(-1.0);
 
-        cell.facelj[n].phi[1]    = p1(xsi[n]) * p0(-1.0);
-        cell.facelj[n].dphidx[1] = p1_prime(xsi[n]) * p0(-1.0);
-        cell.facelj[n].dphidy[1] = p1(xsi[n]) * p0_prime(-1.0);
-
-        cell.facelj[n].phi[2]    = p0(xsi[n]) * p1(-1.0);
-        cell.facelj[n].dphidx[2] = p0_prime(xsi[n]) * p1(-1.0);
-        cell.facelj[n].dphidy[2] = p0(xsi[n]) * p1_prime(-1.0);
+        cell.facelj[n].phi[2]    = p1(xsi[n]) * p0(-1.0);
+        cell.facelj[n].dphidx[2] = p1_prime(xsi[n]) * p0(-1.0);
+        cell.facelj[n].dphidy[2] = p1(xsi[n]) * p0_prime(-1.0);
+        #endif
+        #if (DG_ORDER >= 3)
+        // nk = 3
+        cell.node[nc].phi[3]    = p0(xsi[n]) * p2(-1.0);
+        cell.node[nc].dphidx[3] = p0_prime(xsi[n]) * p2(-1.0);
+        cell.node[nc].dphidy[3] = p0(xsi[n]) * p2_prime(-1.0);
+        // nk = 4
+        cell.node[nc].phi[4]    = p1(xsi[n]) * p1(-1.0);
+        cell.node[nc].dphidx[4] = p1_prime(xsi[n]) * p1(-1.0);
+        cell.node[nc].dphidy[4] = p1(xsi[n]) * p1_prime(-1.0); 
+        // nk = 5
+        cell.node[nc].phi[5]    = p2(xsi[n]) * p0(-1.0);
+        cell.node[nc].dphidx[5] = p2_prime(xsi[n]) * p0(-1.0);
+        cell.node[nc].dphidy[5] = p2(xsi[n]) * p0_prime(-1.0);                       
+        #endif  
 
         cell.facelj[n].gw = gw[n] * (-1.0); // 1D Gaussian weight * nhat
 
@@ -183,14 +248,29 @@ struct Cells set_cell(void)
         cell.facerj[n].phi[0]    = p0(xsi[n]) * p0(1.0);
         cell.facerj[n].dphidx[0] = p0_prime(xsi[n]) * p0(1.0);
         cell.facerj[n].dphidy[0] = p0(xsi[n]) * p0_prime(1.0);
+        #if (DG_ORDER >= 2)
+        cell.facerj[n].phi[1]    = p0(xsi[n]) * p1(1.0);
+        cell.facerj[n].dphidx[1] = p0_prime(xsi[n]) * p1(1.0);
+        cell.facerj[n].dphidy[1] = p0(xsi[n]) * p1_prime(1.0);
 
-        cell.facerj[n].phi[1]    = p1(xsi[n]) * p0(1.0);
-        cell.facerj[n].dphidx[1] = p1_prime(xsi[n]) * p0(1.0);
-        cell.facerj[n].dphidy[1] = p1(xsi[n]) * p0_prime(1.0);
-
-        cell.facerj[n].phi[2]    = p0(xsi[n]) * p1(1.0);
-        cell.facerj[n].dphidx[2] = p0_prime(xsi[n]) * p1(1.0);
-        cell.facerj[n].dphidy[2] = p0(xsi[n]) * p1_prime(1.0);
+        cell.facerj[n].phi[2]    = p1(xsi[n]) * p0(1.0);
+        cell.facerj[n].dphidx[2] = p1_prime(xsi[n]) * p0(1.0);
+        cell.facerj[n].dphidy[2] = p1(xsi[n]) * p0_prime(1.0);
+        #endif
+        #if (DG_ORDER >= 3)
+        // nk = 3
+        cell.node[nc].phi[3]    = p0(xsi[n]) * p2(1.0);
+        cell.node[nc].dphidx[3] = p0_prime(xsi[n]) * p2(1.0);
+        cell.node[nc].dphidy[3] = p0(xsi[n]) * p2_prime(1.0);
+        // nk = 4
+        cell.node[nc].phi[4]    = p1(xsi[n]) * p1(1.0);
+        cell.node[nc].dphidx[4] = p1_prime(xsi[n]) * p1(1.0);
+        cell.node[nc].dphidy[4] = p1(xsi[n]) * p1_prime(1.0); 
+        // nk = 5
+        cell.node[nc].phi[5]    = p2(xsi[n]) * p0(1.0);
+        cell.node[nc].dphidx[5] = p2_prime(xsi[n]) * p0(1.0);
+        cell.node[nc].dphidy[5] = p2(xsi[n]) * p0_prime(1.0);                       
+        #endif
 
         cell.facerj[n].gw = gw[n] * (1.0); // 1D Gaussian weight * nhat
     }
@@ -313,14 +393,56 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
             real *wij = &weights[NCONS * NK * (i * nj + j)];
             real r2 = power(x - xmid, 2) + power(y - ymid, 2);
 
-            
-            wij[0 * NK] = 1.0;
-            wij[1 * NK] = 0.0;
-            wij[2 * NK] = 0.0;
-            wij[3 * NK] = 1.0 + exp(-r2/0.01);
+            /*real amag = 1e-2;
 
-            /*//if (square_root(r2) < 0.125)
-            if (y < 0.5)    
+            wij[0 * NK] = 1.0 + amag * 1.0 * sin(2.0*PI*x);
+            wij[1 * NK] = 1.0 + amag * (-1.0) * sin(2.0*PI*x);
+            wij[2 * NK] = amag *  (1.0) * sin(2.0*PI*x);
+            wij[3 * NK] = (1.0 / ADIABATIC_GAMMA) / (ADIABATIC_GAMMA -1.0) + amag * 1.5 * sin(2.0*PI*x); */
+            //if (j==0) printf("%f %e %e\n",x,sin(2.0*PI*x),wij[1 * NK]);
+            
+            real prim[NCONS];
+            real cons[NCONS];
+            real flux[NCONS];
+            real rho, vx, vy, pressure;
+
+            // For |y| > 0.25, we set Vx = -0.5 and ρ = 1, for |y| ≤ 0.25, Vx = 0.5 and ρ = 2. 
+
+            /*if ( y < 0.75 * (y1-y0) && y > 0.25*(y1-y0) )
+            {
+                vx = 0.5;
+                rho = 2.0;
+            }
+            else
+            {
+                vx = -0.5;
+                rho = 1.0;
+            }
+            vy = 0.01*sin(6*x);
+            */
+            /*rho      = 2.0 + 0.5*sin(2.0*PI*x);
+            vx       = 3.0;
+            vy       = 0.0;
+            pressure = 2.0;
+
+            prim[0] = rho;
+            prim[1] = vx;
+            prim[2] = vy;
+            prim[3] = pressure;
+
+            primitive_to_conserved(prim,cons);
+            primitive_to_flux_vector(prim,flux,0);
+
+            //printf("%f %f %f %f\n", cons[0],cons[1],cons[2],cons[3]);
+            //printf("%f %f %f %f\n", flux[0],flux[1],flux[2],flux[3]);
+
+            wij[0 * NK] = cons[0];
+            wij[1 * NK] = cons[1];
+            wij[2 * NK] = cons[2];
+            wij[3 * NK] = cons[3];
+*/
+            //if (square_root(r2) < 0.125)
+            if (x < xmid)    
             {
                 wij[0*NK] = 1.0;
                 wij[1*NK] = 0.0;
@@ -333,6 +455,21 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
                 wij[1*NK] = 0.0;
                 wij[2*NK] = 0.0;
                 wij[3*NK] = 0.125;
+            }
+            /*
+            if (y < ymid)    
+            {
+                wij[0*NK] = 1.0;
+                wij[1*NK] = -0.1;
+                wij[2*NK] = 0.02*sin(6*x);
+                wij[3*NK] = 1.0;
+            }
+            else
+            {
+                wij[0*NK] = 1.0;
+                wij[1*NK] = 0.1;
+                wij[2*NK] = 0.02*sin(6*x);
+                wij[3*NK] = 1.0;
             }*/
         }
     }
@@ -420,6 +557,7 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
             int jl = j - 1;
             int jr = j + 1;
 
+            // Outflow BC
             if (il == -1)
                 il += 1;
 
@@ -431,6 +569,19 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
 
             if (jr == nj)
                 jr -= 1;
+
+ /*           //Periodic BC
+            if (il == -1)
+                il = ni-1;
+
+            if (ir == ni)
+                ir = 0;
+
+            if (jl == -1)
+                jl = nj-1;
+
+            if (jr == nj)
+                jr = 0; */
 
             /* */ real *wij = &update.weights[NCONS * NK * (i  * nj + j )];
 
@@ -468,12 +619,14 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
                 conserved_to_primitive(consp, primp);
                 
                 riemann_hlle(primm, primp, flux_x, 0);
-
+                //printf("%d left face flux : %f %f %f %f\n", i, flux_x[0],flux_x[1],flux_x[2],flux_x[3]);
+                
                 for (int q = 0; q < NCONS; ++q)
                 {
                     for (int l = 0; l < NK; ++l)
                     {
                         dwij[NK * q + l] -= flux_x[q] * cell.faceli[n].phi[l] * cell.faceli[n].gw;  
+                        //printf("i=%d q=%d l=%d left face: %f %f %f\n\n", i, q, l, flux_x[q] * cell.faceli[n].phi[l] * cell.faceli[n].gw, cell.faceli[n].phi[l], cell.faceli[n].gw);
                     }
                 }
             }
@@ -497,16 +650,18 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
                 conserved_to_primitive(consp, primp);
                 
                 riemann_hlle(primm, primp, flux_x, 0);
-
+                //printf("%d right face flux : %f %f %f %f\n\n", i, flux_x[0],flux_x[1],flux_x[2],flux_x[3]);
+            
                 for (int q = 0; q < NCONS; ++q)
                 {
                     for (int l = 0; l < NK; ++l)
                     {
                         dwij[NK * q + l] -= flux_x[q] * cell.faceri[n].phi[l] * cell.faceri[n].gw;
+                        //printf("i=%d q=%d l=%d right face: %f %f %f\n\n", i,q, l,flux_x[q] * cell.faceri[n].phi[l] * cell.faceri[n].gw , cell.faceri[n].phi[l], cell.faceri[n].gw);
                     }
                 }
             }
-
+/*
             // Bottom Face
             for (int n = 0; n < NFACE; ++n)
             {
@@ -564,9 +719,9 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
                     }
                 }
             } 
-
+*/
             // Volume term
-
+/*
             for (int n = 0; n < NCELL; ++n)
             {
                 for (int q = 0; q < NCONS; ++q)
@@ -584,6 +739,7 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
 
                 primitive_to_flux_vector(prim, flux_x, 0);
                 primitive_to_flux_vector(prim, flux_y, 1);
+                //if(i==2) printf("%f %f %f %f\n", flux_x[0],flux_x[1],flux_x[2],flux_x[3]);
 
                 for (int q = 0; q < NCONS; ++q)
                 {
@@ -594,7 +750,7 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
                     }
                 }
 
-            }
+            }*/
         }
     }
 
@@ -609,7 +765,7 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
             {
                 for (int l = 0; l < NK; ++l)
                 {
-                    wij[ NK * q + l] += 0.25 * dwij[NK * q + l] * dt / dx; 
+                    wij[ NK * q + l] += 0.5 * dwij[NK * q + l] * dt / dx; 
                 }
             }
         }
@@ -621,7 +777,7 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
 int main()
 {
     const int ni = 128;
-    const int nj = 128;
+    const int nj = 1;
     const int fold = 1;
     const real x0 = 0.0;
     const real x1 = 1.0;
@@ -640,9 +796,9 @@ int main()
 
     int iteration = 0;
     real time = 0.0;
-    real dt = min2(dx, dy) * 0.05;
+    real dt = dx * 0.01;
 
-    while (time < 0.01)
+    while (time < 0.001)
     {
         clock_t start = clock();
 
