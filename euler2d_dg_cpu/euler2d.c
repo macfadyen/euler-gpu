@@ -25,10 +25,10 @@ typedef double real;
 #endif
 
 #define NDIM 2
-#define DG_ORDER 3
-#define NFACE 3
-#define NCELL 9
-#define NK    6  // number of basis polynomials
+#define DG_ORDER 2
+#define NFACE 2
+#define NCELL 4
+#define NK    3  // number of basis polynomials
 #define NCONS 4  // number of conserved variables
 
 #define SQRT_THREE square_root(3.0)
@@ -53,7 +53,25 @@ struct Cells
 
 };
 
-real minmod(real w1, real w0, real w0l, real w0r)
+real minmodTVB(real w1, real w0, real w0l, real w0r, real dx)
+{
+    real a = w1 / SQRT_THREE;
+    real b = (w0 - w0l) * BETA;
+    real c = (w0r - w0) * BETA;
+
+    const real M = 1000.0; //Cockburn & Shu, JCP 141, 199 (1998) eq. 3.7
+
+    if (fabs(a) <= M * dx * dx)
+    {        
+        return w1;
+    }
+    else
+    {
+        return 0.25 * SQRT_THREE * fabs(sign(a) + sign(b)) * (sign(a) + sign(c)) * minabs(a, b, c);
+    }
+}
+
+real minmod(real w1, real w0, real w0l, real w0r, real dx)
 {
     real a = w1 / SQRT_THREE;
     real b = (w0 - w0l) * BETA;
@@ -577,6 +595,7 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
     
     real *delta_weights = (real*) malloc(ni * nj * NCONS * NK * sizeof(real));
 
+    //#pragma omp parallel for
     for (int i = 0; i < ni; ++i)
     {
         for (int j = 0; j < nj; ++j)
@@ -843,17 +862,19 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
                 #if (DG_ORDER == 2)
 
                 // x slopes
-                wij[ NK * q + 2] = minmod(wij[ NK * q + 2], wij[ NK * q + 0], wli[ NK * q + 0], wri[ NK * q + 0]);
+                wij[ NK * q + 2] = minmodTVB(wij[ NK * q + 2], wij[ NK * q + 0], wli[ NK * q + 0], wri[ NK * q + 0], dx);
                 // y slopes 
-                wij[ NK * q + 1] = minmod(wij[ NK * q + 1], wij[ NK * q + 0], wlj[ NK * q + 0], wrj[ NK * q + 0]);
+                wij[ NK * q + 1] = minmodTVB(wij[ NK * q + 1], wij[ NK * q + 0], wlj[ NK * q + 0], wrj[ NK * q + 0], dy);
                 
                 #elif (DG_ORDER >= 2)
 
                 real wtilde[NK*NCONS];
+
                 // x slopes
-                wtilde[ NK * q + 2] = minmod(wij[ NK * q + 2], wij[ NK * q + 0], wli[ NK * q + 0], wri[ NK * q + 0]);
+                wtilde[ NK * q + 2] = minmodTVB(wij[ NK * q + 2], wij[ NK * q + 0], wli[ NK * q + 0], wri[ NK * q + 0], dx);
                 // y slopes 
-                wtilde[ NK * q + 1] = minmod(wij[ NK * q + 1], wij[ NK * q + 0], wlj[ NK * q + 0], wrj[ NK * q + 0]);
+                wtilde[ NK * q + 1] = minmodTVB(wij[ NK * q + 1], wij[ NK * q + 0], wlj[ NK * q + 0], wrj[ NK * q + 0], dy);
+                
                 if (wtilde[ NK * q + 2] != wij[ NK * q + 2])
                 {
                     wij[ NK * q + 2] = wtilde[ NK * q + 2];
@@ -879,7 +900,7 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
 
 int main()
 {
-    const int ni = 256;
+    const int ni = 64;
     const int nj = 1;
     const int fold = 10;
     const real x0 = 0.0;
