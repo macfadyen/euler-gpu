@@ -4,7 +4,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-#define ADIABATIC_GAMMA (5.0 / 3.0)
+#define ADIABATIC_GAMMA (7.0 / 5.0)
 #define PI 3.14159265359
 #define min2(a, b) (a) < (b) ? (a) : (b)
 #define max2(a, b) (a) > (b) ? (a) : (b)
@@ -25,10 +25,10 @@ typedef double real;
 #endif
 
 #define NDIM 2
-#define DG_ORDER 2
-#define NFACE 2
-#define NCELL 4
-#define NK    3  // number of basis polynomials
+#define DG_ORDER 3
+#define NFACE 3
+#define NCELL 9
+#define NK    6  // number of basis polynomials
 #define NCONS 4  // number of conserved variables
 
 #define SQRT_THREE square_root(3.0)
@@ -418,9 +418,9 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
             real cons[NCONS];
             real flux[NCONS];
             real rho, vx, vy, pressure;
-
-            // For |y| > 0.25, we set Vx = -0.5 and ρ = 1, for |y| ≤ 0.25, Vx = 0.5 and ρ = 2. 
 /*
+            // For |y| > 0.25, we set Vx = -0.5 and ρ = 1, for |y| ≤ 0.25, Vx = 0.5 and ρ = 2. 
+
             if ( y < 0.75 * (y1-y0) && y > 0.25*(y1-y0) )
             {
                 vx = 0.5;
@@ -431,9 +431,9 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
                 vx = -0.5;
                 rho = 1.0;
             }
-            vy = 0.01*sin(6*x);
-            */
-            /*
+            vy = 0.1*sin(6*x);
+            pressure = 2.5;
+            
             rho      = 2.0 + 0.5*sin(2.0*PI*x);
             vx       = 3.0;
             vy       = 0.0;
@@ -447,30 +447,42 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
             primitive_to_conserved(prim,cons);
             primitive_to_flux_vector(prim,flux,0);
 
-            //printf("%f %f %f %f\n", cons[0],cons[1],cons[2],cons[3]);
-            //printf("%f %f %f %f\n", flux[0],flux[1],flux[2],flux[3]);
+            //printf("cons: %f %f %f %f\n", cons[0],cons[1],cons[2],cons[3]);
+            //printf("flux %f %f %f %f\n\n", flux[0],flux[1],flux[2],flux[3]);
 
             wij[0 * NK] = cons[0];
             wij[1 * NK] = cons[1];
             wij[2 * NK] = cons[2];
-            wij[3 * NK] = cons[3]; */
+            wij[3 * NK] = cons[3]; 
+
+
+*/
 
             //if (square_root(r2) < 0.125)
             if (x < xmid)    
             {
-                wij[0*NK] = 1.0;
-                wij[1*NK] = 0.0;
-                wij[2*NK] = 0.0;
-                wij[3*NK] = 1.0;
+                rho = 1.0;
+                pressure = 1.0;
             }
             else
             {
-                wij[0*NK] = 0.1;
-                wij[1*NK] = 0.0;
-                wij[2*NK] = 0.0;
-                wij[3*NK] = 0.125;
+                rho = 0.125;
+                pressure = 0.1;
             }
-            
+            vx = 0.0;
+            vy = 0.0;
+
+            prim[0] = rho;
+            prim[1] = vx;
+            prim[2] = vy;
+            prim[3] = pressure;
+
+            primitive_to_conserved(prim, cons);
+
+            wij[0 * NK] = cons[0];
+            wij[1 * NK] = cons[1];
+            wij[2 * NK] = cons[2];
+            wij[3 * NK] = cons[3]; 
             /*
             if (y < ymid)    
             {
@@ -560,6 +572,8 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
 
     real flux_x[NCONS];
     real flux_y[NCONS];
+
+
     
     real *delta_weights = (real*) malloc(ni * nj * NCONS * NK * sizeof(real));
 
@@ -571,7 +585,7 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
             int ir = i + 1;
             int jl = j - 1;
             int jr = j + 1;
-
+            
             // Outflow BC
             if (il == -1)
                 il += 1;
@@ -584,9 +598,9 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
 
             if (jr == nj)
                 jr -= 1;
-
+            /*
             //Periodic BC
-            /*if (il == -1)
+            if (il == -1)
                 il = ni-1;
 
             if (ir == ni)
@@ -597,7 +611,7 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
 
             if (jr == nj)
                 jr = 0;
-*/
+            */
             /* */ real *wij = &update.weights[NCONS * NK * (i  * nj + j )];
 
             const real *wli = &update.weights[NCONS * NK * (il * nj + j )];
@@ -778,6 +792,7 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
             int jl = j - 1;
             int jr = j + 1;
 
+            
             // Outflow BC
             if (il == -1)
                 il += 1;
@@ -790,8 +805,9 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
 
             if (jr == nj)
                 jr -= 1;
-            //Periodic BC
             /*
+            //Periodic BC
+            
             if (il == -1)
                 il = ni-1;
 
@@ -824,10 +840,37 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
             // slope limiting for DG_ORDER = 2 (need to zero higher orders for limited slopes)
             for (int q = 0; q < NCONS; ++q)
             {
+                #if (DG_ORDER == 2)
+
                 // x slopes
                 wij[ NK * q + 2] = minmod(wij[ NK * q + 2], wij[ NK * q + 0], wli[ NK * q + 0], wri[ NK * q + 0]);
                 // y slopes 
                 wij[ NK * q + 1] = minmod(wij[ NK * q + 1], wij[ NK * q + 0], wlj[ NK * q + 0], wrj[ NK * q + 0]);
+                
+                #elif (DG_ORDER >= 2)
+
+                real wtilde[NK*NCONS];
+                // x slopes
+                wtilde[ NK * q + 2] = minmod(wij[ NK * q + 2], wij[ NK * q + 0], wli[ NK * q + 0], wri[ NK * q + 0]);
+                // y slopes 
+                wtilde[ NK * q + 1] = minmod(wij[ NK * q + 1], wij[ NK * q + 0], wlj[ NK * q + 0], wrj[ NK * q + 0]);
+                if (wtilde[ NK * q + 2] != wij[ NK * q + 2])
+                {
+                    wij[ NK * q + 2] = wtilde[ NK * q + 2];
+                    for (int l = 3; l < NK; ++l)
+                        {
+                            wij[ NK * q + l] = 0.0;
+                        }
+                }
+                if (wtilde[ NK * q + 1] != wij[ NK * q + 1])
+                {
+                    wij[ NK * q + 1] = wtilde[ NK * q + 1];
+                    for (int l = 3; l < NK; ++l)
+                        {
+                            wij[ NK * q + l] = 0.0;
+                        }
+                }
+                #endif
             }
         }
     }
@@ -836,9 +879,9 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
 
 int main()
 {
-    const int ni = 128;
+    const int ni = 256;
     const int nj = 1;
-    const int fold = 1;
+    const int fold = 10;
     const real x0 = 0.0;
     const real x1 = 1.0;
     const real y0 = 0.0;
@@ -856,9 +899,9 @@ int main()
 
     int iteration = 0;
     real time = 0.0;
-    real dt = dx * 0.001;
+    real dt = dx * 0.01;
 
-    while (time < 0.1)
+    while (time < 0.228)
     {
         clock_t start = clock();
 
