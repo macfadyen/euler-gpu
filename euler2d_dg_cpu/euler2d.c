@@ -8,6 +8,11 @@
 #define PI 3.14159265359
 #define min2(a, b) (a) < (b) ? (a) : (b)
 #define max2(a, b) (a) > (b) ? (a) : (b)
+#define min3(a, b, c) min2(a, min2(b, c))
+#define max3(a, b, c) max2(a, max2(b, c))
+#define sign(x) copysign(1.0, x)
+#define minabs(a, b, c) min3(fabs(a), fabs(b), fabs(c))
+#define BETA 1.0
 
 #ifdef SINGLE
 typedef float real;
@@ -20,11 +25,13 @@ typedef double real;
 #endif
 
 #define NDIM 2
-#define DG_ORDER 1
-#define NFACE 1
-#define NCELL 1
-#define NK    1  // number of basis polynomials
+#define DG_ORDER 2
+#define NFACE 2
+#define NCELL 4
+#define NK    3  // number of basis polynomials
 #define NCONS 4  // number of conserved variables
+
+#define SQRT_THREE square_root(3.0)
 
 struct Cells cell;
 
@@ -45,6 +52,14 @@ struct Cells
     struct Nodes facerj[NFACE]; // top face nodes   
 
 };
+
+real minmod(real w1, real w0, real w0l, real w0r)
+{
+    real a = w1 / SQRT_THREE;
+    real b = (w0 - w0l) * BETA;
+    real c = (w0r - w0) * BETA;
+    return 0.25 * SQRT_THREE * fabs(sign(a) + sign(b)) * (sign(a) + sign(c)) * minabs(a, b, c);
+}
 
 // Legendre polynomials scaled by sqrt(2n+1), and their derivatives
 
@@ -92,8 +107,6 @@ struct Cells set_cell(void)
 {
     struct Cells cell;
 
-    real nhat;
-
     #if (DG_ORDER == 1)
         real xsi[NFACE] = {0.0};
         real gw[NFACE]  = {2.0}; // 1D Gaussian weight       
@@ -117,11 +130,11 @@ struct Cells set_cell(void)
             cell.node[nc].dphidx[0] = p0_prime(xsi[i]) * p0(xsi[j]);
             cell.node[nc].dphidy[0] = p0(xsi[i]) * p0_prime(xsi[j]);
             #if (DG_ORDER >= 2)
-            // nk = 1
+            // nk = 1 (y slope)
             cell.node[nc].phi[1]    = p0(xsi[i]) * p1(xsi[j]);
             cell.node[nc].dphidx[1] = p0_prime(xsi[i]) * p1(xsi[j]);
             cell.node[nc].dphidy[1] = p0(xsi[i]) * p1_prime(xsi[j]);
-            // nk = 2
+            // nk = 2 (x slope)
             cell.node[nc].phi[2]    = p1(xsi[i]) * p0(xsi[j]);
             cell.node[nc].dphidx[2] = p1_prime(xsi[i]) * p0(xsi[j]);
             cell.node[nc].dphidy[2] = p1(xsi[i]) * p0_prime(xsi[j]);
@@ -407,8 +420,8 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
             real rho, vx, vy, pressure;
 
             // For |y| > 0.25, we set Vx = -0.5 and ρ = 1, for |y| ≤ 0.25, Vx = 0.5 and ρ = 2. 
-
-            /*if ( y < 0.75 * (y1-y0) && y > 0.25*(y1-y0) )
+/*
+            if ( y < 0.75 * (y1-y0) && y > 0.25*(y1-y0) )
             {
                 vx = 0.5;
                 rho = 2.0;
@@ -420,7 +433,8 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
             }
             vy = 0.01*sin(6*x);
             */
-            /*rho      = 2.0 + 0.5*sin(2.0*PI*x);
+            /*
+            rho      = 2.0 + 0.5*sin(2.0*PI*x);
             vx       = 3.0;
             vy       = 0.0;
             pressure = 2.0;
@@ -439,8 +453,8 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
             wij[0 * NK] = cons[0];
             wij[1 * NK] = cons[1];
             wij[2 * NK] = cons[2];
-            wij[3 * NK] = cons[3];
-*/
+            wij[3 * NK] = cons[3]; */
+
             //if (square_root(r2) < 0.125)
             if (x < xmid)    
             {
@@ -456,6 +470,7 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
                 wij[2*NK] = 0.0;
                 wij[3*NK] = 0.125;
             }
+            
             /*
             if (y < ymid)    
             {
@@ -570,8 +585,8 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
             if (jr == nj)
                 jr -= 1;
 
- /*           //Periodic BC
-            if (il == -1)
+            //Periodic BC
+            /*if (il == -1)
                 il = ni-1;
 
             if (ir == ni)
@@ -581,8 +596,8 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
                 jl = nj-1;
 
             if (jr == nj)
-                jr = 0; */
-
+                jr = 0;
+*/
             /* */ real *wij = &update.weights[NCONS * NK * (i  * nj + j )];
 
             const real *wli = &update.weights[NCONS * NK * (il * nj + j )];
@@ -661,7 +676,7 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
                     }
                 }
             }
-/*
+
             // Bottom Face
             for (int n = 0; n < NFACE; ++n)
             {
@@ -719,9 +734,9 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
                     }
                 }
             } 
-*/
+
             // Volume term
-/*
+
             for (int n = 0; n < NCELL; ++n)
             {
                 for (int q = 0; q < NCONS; ++q)
@@ -750,7 +765,7 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
                     }
                 }
 
-            }*/
+            }
         }
     }
 
@@ -758,8 +773,45 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
     {
         for (int j = 0; j < nj; ++j)
         {
+            int il = i - 1;
+            int ir = i + 1;
+            int jl = j - 1;
+            int jr = j + 1;
+
+            // Outflow BC
+            if (il == -1)
+                il += 1;
+
+            if (ir == ni)
+                ir -= 1;
+
+            if (jl == -1)
+                jl += 1;
+
+            if (jr == nj)
+                jr -= 1;
+            //Periodic BC
+            /*
+            if (il == -1)
+                il = ni-1;
+
+            if (ir == ni)
+                ir = 0;
+
+            if (jl == -1)
+                jl = nj-1;
+
+            if (jr == nj)
+                jr = 0;
+            */
+
             real *wij = &update.weights[NCONS * NK * (i  * nj + j )];
             real *dwij = &delta_weights[NCONS * NK * (i  * nj + j )];
+
+            const real *wli = &update.weights[NCONS * NK * (il * nj + j )];
+            const real *wri = &update.weights[NCONS * NK * (ir * nj + j )];
+            const real *wlj = &update.weights[NCONS * NK * (i  * nj + jl)];
+            const real *wrj = &update.weights[NCONS * NK * (i  * nj + jr)];
 
             for (int q = 0; q < NCONS; ++q)
             {
@@ -768,8 +820,16 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
                     wij[ NK * q + l] += 0.5 * dwij[NK * q + l] * dt / dx; 
                 }
             }
-        }
 
+            // slope limiting for DG_ORDER = 2 (need to zero higher orders for limited slopes)
+            for (int q = 0; q < NCONS; ++q)
+            {
+                // x slopes
+                wij[ NK * q + 2] = minmod(wij[ NK * q + 2], wij[ NK * q + 0], wli[ NK * q + 0], wri[ NK * q + 0]);
+                // y slopes 
+                wij[ NK * q + 1] = minmod(wij[ NK * q + 1], wij[ NK * q + 0], wlj[ NK * q + 0], wrj[ NK * q + 0]);
+            }
+        }
     }
     free(delta_weights);
 }
@@ -796,9 +856,9 @@ int main()
 
     int iteration = 0;
     real time = 0.0;
-    real dt = dx * 0.01;
+    real dt = dx * 0.001;
 
-    while (time < 0.001)
+    while (time < 0.1)
     {
         clock_t start = clock();
 
