@@ -4,7 +4,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-#define ADIABATIC_GAMMA (7.0 / 5.0)
+#define ADIABATIC_GAMMA (5.0 / 3.0)
 #define PI 3.14159265359
 #define min2(a, b) (a) < (b) ? (a) : (b)
 #define max2(a, b) (a) > (b) ? (a) : (b)
@@ -12,7 +12,7 @@
 #define max3(a, b, c) max2(a, max2(b, c))
 #define sign(x) copysign(1.0, x)
 #define minabs(a, b, c) min3(fabs(a), fabs(b), fabs(c))
-#define BETA 1.0
+#define BETA 0.5
 
 #ifdef SINGLE
 typedef float real;
@@ -33,8 +33,6 @@ typedef double real;
 
 #define SQRT_THREE square_root(3.0)
 
-struct Cells cell;
-
 struct Cells
 {
     struct Nodes
@@ -43,15 +41,15 @@ struct Cells
         real dphidx[NK];
         real dphidy[NK];
         real gw;
-    };
+    } node[NCELL];
 
-    struct Nodes node[NCELL];
+    //struct Nodes node[NCELL];
     struct Nodes faceli[NFACE]; // left face nodes
     struct Nodes faceri[NFACE]; // right face nodes
     struct Nodes facelj[NFACE]; // bottom face nodes
     struct Nodes facerj[NFACE]; // top face nodes   
 
-};
+} cell;
 
 real minmodTVB(real w1, real w0, real w0l, real w0r, real dx)
 {
@@ -59,7 +57,7 @@ real minmodTVB(real w1, real w0, real w0l, real w0r, real dx)
     real b = (w0 - w0l) * BETA;
     real c = (w0r - w0) * BETA;
 
-    const real M = 1000.0; //Cockburn & Shu, JCP 141, 199 (1998) eq. 3.7
+    const real M = 50000.0; //Cockburn & Shu, JCP 141, 199 (1998) eq. 3.7 suggest M~50.0
 
     if (fabs(a) <= M * dx * dx)
     {        
@@ -123,8 +121,6 @@ real p3_prime(const real xsi)
 
 struct Cells set_cell(void)
 {
-    struct Cells cell;
-
     #if (DG_ORDER == 1)
         real xsi[NFACE] = {0.0};
         real gw[NFACE]  = {2.0}; // 1D Gaussian weight       
@@ -308,6 +304,11 @@ struct Cells set_cell(void)
     return cell;
 }
 
+void conserved_to_characteristic_x(const real *cons, real *charx)
+{
+//
+}
+
 void conserved_to_primitive(const real *cons, real *prim)
 {
     const real rho = cons[0];
@@ -402,10 +403,65 @@ void riemann_hlle(const real *pl, const real *pr, real *flux, int direction)
     const real am = min2(0.0, min2(al[0], ar[0]));
     const real ap = max2(0.0, max2(al[1], ar[1]));
 
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < NCONS
+        ; ++i)
     {
         flux[i] = (fl[i] * ap - fr[i] * am - (ul[i] - ur[i]) * ap * am) / (ap - am);
     }
+}
+
+void riemann_hllc(const real *pl, const real *pr, real *flux, int direction)
+{
+
+    enum { d, px, py, e }; // Conserved
+    enum { rho, vx, vy, p }; // Primitive
+
+    real ul[NCONS];
+    real ur[NCONS];
+    real ulstar[NCONS];
+    real urstar[NCONS];
+    real fl[NCONS];
+    real fr[NCONS];
+    real al[2];
+    real ar[2];
+
+    const real vnl = primitive_to_velocity_component(pl, direction);
+    const real vnr = primitive_to_velocity_component(pr, direction);
+
+    primitive_to_conserved(pl, ul);
+    primitive_to_conserved(pr, ur);
+    primitive_to_flux_vector(pl, fl, direction);
+    primitive_to_flux_vector(pr, fr, direction);
+    primitive_to_outer_wavespeeds(pl, al, direction);
+    primitive_to_outer_wavespeeds(pr, ar, direction);
+
+    const real am = min3(0.0, al[0], ar[0]);
+    const real ap = max3(0.0, al[1], ar[1]);
+
+    real lc = (
+        + (pr[p] - pr[rho] * vnr * (ap - vnr))
+        - (pl[p] - pl[rho] * vnl * (am - vnl))) / (pl[rho] * (am - vnl) - pr[rho] * (ap - vnr));
+
+    real ffl = pl[rho] * (am - vnl) / (am - lc);
+    real ffr = pr[rho] * (ap - vnr) / (ap - lc);
+    
+    ulstar[d] = ffl;
+    ulstar[e] = ffl * (ul[e] / pl[rho] + (lc - vnl) * (lc + pl[p] / (pl[rho] * (am - vnl))));
+    ulstar[px] = ffl * ((lc - vnl) * (direction==0) + pl[vx]);
+    ulstar[py] = ffl * ((lc - vnl) * (direction==1) + pl[vy]);
+
+    urstar[d] = ffr;
+    urstar[e] = ffr * (ur[e] / pr[rho] + (lc - vnl) * (lc + pr[p] / (pr[rho] * (ap - vnl))));
+    urstar[px] = ffr * ((lc - vnl) * (direction==0) + pl[vx]);
+    urstar[py] = ffr * ((lc - vnl) * (direction==1) + pl[vy]);
+
+    const real s = 0.0; //stationary face
+
+    if      ( s <= am )       for (int i=0; i<NCONS; ++i) flux[i] = fl[i];
+    else if ( am<s && s<=lc ) for (int i=0; i<NCONS; ++i) flux[i] = fl[i] + am * (ulstar[i] - ul[i]);
+    else if ( lc<s && s<=ap ) for (int i=0; i<NCONS; ++i) flux[i] = fr[i] + ap * (urstar[i] - ur[i]);
+    else if ( ap<s          ) for (int i=0; i<NCONS; ++i) flux[i] = fr[i];
+
 }
 
 void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, real y1)
@@ -435,7 +491,7 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
             real prim[NCONS];
             real cons[NCONS];
             real flux[NCONS];
-            real rho, vx, vy, pressure;
+            real rho, vx, vy, pressure; 
 /*
             // For |y| > 0.25, we set Vx = -0.5 and ρ = 1, for |y| ≤ 0.25, Vx = 0.5 and ρ = 2. 
 
@@ -449,13 +505,13 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
                 vx = -0.5;
                 rho = 1.0;
             }
-            vy = 0.1*sin(6*x);
+            vy = 0.05*sin(2.0*PI*x);
             pressure = 2.5;
             
-            rho      = 2.0 + 0.5*sin(2.0*PI*x);
-            vx       = 3.0;
-            vy       = 0.0;
-            pressure = 2.0;
+            //rho      = 2.0 + 0.5*sin(2.0*PI*x);
+            //vx       = 3.0;
+            //vy       = 0.0;
+            //pressure = 2.0;
 
             prim[0] = rho;
             prim[1] = vx;
@@ -463,7 +519,7 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
             prim[3] = pressure;
 
             primitive_to_conserved(prim,cons);
-            primitive_to_flux_vector(prim,flux,0);
+            //primitive_to_flux_vector(prim,flux,0);
 
             //printf("cons: %f %f %f %f\n", cons[0],cons[1],cons[2],cons[3]);
             //printf("flux %f %f %f %f\n\n", flux[0],flux[1],flux[2],flux[3]);
@@ -474,8 +530,8 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
             wij[3 * NK] = cons[3]; 
 
 
-*/
 
+*/
             //if (square_root(r2) < 0.125)
             if (x < xmid)    
             {
@@ -591,7 +647,7 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
     real flux_x[NCONS];
     real flux_y[NCONS];
 
-
+    real wtilde[NK*NCONS];
     
     real *delta_weights = (real*) malloc(ni * nj * NCONS * NK * sizeof(real));
 
@@ -666,7 +722,7 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
                 conserved_to_primitive(consm, primm);
                 conserved_to_primitive(consp, primp);
                 
-                riemann_hlle(primm, primp, flux_x, 0);
+                riemann_hllc(primm, primp, flux_x, 0);
                 //printf("%d left face flux : %f %f %f %f\n", i, flux_x[0],flux_x[1],flux_x[2],flux_x[3]);
                 
                 for (int q = 0; q < NCONS; ++q)
@@ -697,7 +753,7 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
                 conserved_to_primitive(consm, primm);
                 conserved_to_primitive(consp, primp);
                 
-                riemann_hlle(primm, primp, flux_x, 0);
+                riemann_hllc(primm, primp, flux_x, 0);
                 //printf("%d right face flux : %f %f %f %f\n\n", i, flux_x[0],flux_x[1],flux_x[2],flux_x[3]);
             
                 for (int q = 0; q < NCONS; ++q)
@@ -728,7 +784,7 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
                 conserved_to_primitive(consm, primm);
                 conserved_to_primitive(consp, primp);
                 
-                riemann_hlle(primm, primp, flux_y, 1);
+                riemann_hllc(primm, primp, flux_y, 1);
 
                 for (int q = 0; q < NCONS; ++q)
                 {
@@ -757,7 +813,7 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
                 conserved_to_primitive(consm, primm);
                 conserved_to_primitive(consp, primp);
                 
-                riemann_hlle(primm, primp, flux_y, 1);
+                riemann_hllc(primm, primp, flux_y, 1);
 
                 for (int q = 0; q < NCONS; ++q)
                 {
@@ -856,7 +912,7 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
                 }
             }
 
-            // slope limiting for DG_ORDER = 2 (need to zero higher orders for limited slopes)
+            // slope limiting 
             for (int q = 0; q < NCONS; ++q)
             {
                 #if (DG_ORDER == 2)
@@ -867,8 +923,6 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
                 wij[ NK * q + 1] = minmodTVB(wij[ NK * q + 1], wij[ NK * q + 0], wlj[ NK * q + 0], wrj[ NK * q + 0], dy);
                 
                 #elif (DG_ORDER >= 2)
-
-                real wtilde[NK*NCONS];
 
                 // x slopes
                 wtilde[ NK * q + 2] = minmodTVB(wij[ NK * q + 2], wij[ NK * q + 0], wli[ NK * q + 0], wri[ NK * q + 0], dx);
@@ -900,7 +954,7 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
 
 int main()
 {
-    const int ni = 64;
+    const int ni = 1024;
     const int nj = 1;
     const int fold = 10;
     const real x0 = 0.0;
@@ -920,9 +974,9 @@ int main()
 
     int iteration = 0;
     real time = 0.0;
-    real dt = dx * 0.01;
+    real dt = dx * 0.04;
 
-    while (time < 0.228)
+    while (time < 0.1)
     {
         clock_t start = clock();
 
