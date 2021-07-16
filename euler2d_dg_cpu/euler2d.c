@@ -12,7 +12,8 @@
 #define max3(a, b, c) max2(a, max2(b, c))
 #define sign(x) copysign(1.0, x)
 #define minabs(a, b, c) min3(fabs(a), fabs(b), fabs(c))
-#define BETA 0.5
+#define BETA 1.0
+#define CFL 0.04
 
 #ifdef SINGLE
 typedef float real;
@@ -57,7 +58,7 @@ real minmodTVB(real w1, real w0, real w0l, real w0r, real dx)
     real b = (w0 - w0l) * BETA;
     real c = (w0r - w0) * BETA;
 
-    const real M = 50000.0; //Cockburn & Shu, JCP 141, 199 (1998) eq. 3.7 suggest M~50.0
+    const real M = 50.0; //Cockburn & Shu, JCP 141, 199 (1998) eq. 3.7 suggest M~50.0
 
     if (fabs(a) <= M * dx * dx)
     {        
@@ -306,7 +307,23 @@ struct Cells set_cell(void)
 
 void conserved_to_characteristic_x(const real *cons, real *charx)
 {
-//
+/* 
+// right eigenvectors
+                {{1,         1,        0,  0, 1},
+                 {u - a,     u,        0,  0, u + a},
+                 {v,         v,        1,  0, v},
+                 {w,         w,        0,  1, w},
+                 {H - u * a, 0.5 * V2, v,  w, H + u * a}}
+
+// left eigenvectors
+                 {
+                {{      H + (a / m) * (u - a), -(u + a / m), -v,         -w,           1, },
+                 { -2 * H + (4 / m) * a2,             2 * u,  2 * v,      2 * w,      -2, },
+                 {          -2 * v  * a2 / m,             0,  2 * a2 / m, 0,           0, },
+                 {          -2 * w  * a2 / m,             0,  0,          2 * a2 / m,  0, },
+                 {      H - (a / m) * (u + a), -(u - a / m), -v,         -w,           1, }},
+                    } * (m / 2 / a2);
+*/
 }
 
 void conserved_to_primitive(const real *cons, real *prim)
@@ -384,6 +401,31 @@ void primitive_to_outer_wavespeeds(const real *prim, real *wavespeeds, int direc
     wavespeeds[1] = vn + cs;
 }
 
+void riemann_llf(const real *pl, const real *pr, real *flux, int direction)
+{
+    real ul[4];
+    real ur[4];
+    real fl[4];
+    real fr[4];
+    real al[2];
+    real ar[2];
+
+    primitive_to_conserved(pl, ul);
+    primitive_to_conserved(pr, ur);
+    primitive_to_flux_vector(pl, fl, direction);
+    primitive_to_flux_vector(pr, fr, direction);
+    primitive_to_outer_wavespeeds(pl, al, direction);
+    primitive_to_outer_wavespeeds(pr, ar, direction);
+
+    const real am = min2(0.0, min2(al[0], ar[0]));
+    const real ap = max2(0.0, max2(al[1], ar[1]));
+
+    for (int q = 0; q < NCONS; ++q)
+    {
+        flux[q] = 0.5 * (fl[q] + fr[q]) - 0.5 * ap * (ur[q] - ul[q]); // Check this
+    }
+}
+
 void riemann_hlle(const real *pl, const real *pr, real *flux, int direction)
 {
     real ul[4];
@@ -403,16 +445,14 @@ void riemann_hlle(const real *pl, const real *pr, real *flux, int direction)
     const real am = min2(0.0, min2(al[0], ar[0]));
     const real ap = max2(0.0, max2(al[1], ar[1]));
 
-    for (int i = 0; i < NCONS
-        ; ++i)
+    for (int q = 0; q < NCONS; ++q)
     {
-        flux[i] = (fl[i] * ap - fr[i] * am - (ul[i] - ur[i]) * ap * am) / (ap - am);
+        flux[q] = (fl[q] * ap - fr[q] * am - (ul[q] - ur[q]) * ap * am) / (ap - am);
     }
 }
 
 void riemann_hllc(const real *pl, const real *pr, real *flux, int direction)
 {
-
     enum { d, px, py, e }; // Conserved
     enum { rho, vx, vy, p }; // Primitive
 
@@ -455,7 +495,7 @@ void riemann_hllc(const real *pl, const real *pr, real *flux, int direction)
     urstar[px] = ffr * ((lc - vnl) * (direction==0) + pl[vx]);
     urstar[py] = ffr * ((lc - vnl) * (direction==1) + pl[vy]);
 
-    const real s = 0.0; //stationary face
+    const real s = 0.0; //stationary face s = x / t
 
     if      ( s <= am )       for (int i=0; i<NCONS; ++i) flux[i] = fl[i];
     else if ( am<s && s<=lc ) for (int i=0; i<NCONS; ++i) flux[i] = fl[i] + am * (ulstar[i] - ul[i]);
@@ -492,9 +532,9 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
             real cons[NCONS];
             real flux[NCONS];
             real rho, vx, vy, pressure; 
-/*
-            // For |y| > 0.25, we set Vx = -0.5 and ρ = 1, for |y| ≤ 0.25, Vx = 0.5 and ρ = 2. 
 
+            // For |y| > 0.25, we set Vx = -0.5 and ρ = 1, for |y| ≤ 0.25, Vx = 0.5 and ρ = 2. 
+/*
             if ( y < 0.75 * (y1-y0) && y > 0.25*(y1-y0) )
             {
                 vx = 0.5;
@@ -528,9 +568,6 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
             wij[1 * NK] = cons[1];
             wij[2 * NK] = cons[2];
             wij[3 * NK] = cons[3]; 
-
-
-
 */
             //if (square_root(r2) < 0.125)
             if (x < xmid)    
@@ -911,6 +948,22 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
                     wij[ NK * q + l] += 0.5 * dwij[NK * q + l] * dt / dx; 
                 }
             }
+            // compute LeftEigenX and LeftEigenY matrices from wij[ NK * q + 0]
+
+            // compute slopes of characteristic variables:
+            //  c1[q] = LeftEigenX(wij[ NK * q + 1])
+            //  c2[q] = LeftEigenX(wij[ NK * q + 2])
+
+            // use minmodTVB to compute limited characteristic slopes
+            // c1tilde[q] and c2tilde[q] 
+
+            // if c1tilde[q] != c1[q] OR c2tilde[q] != c2[q]
+            // w1tilde[q] = RightEigenX(c1tilde[q])
+            // w2tilde[q] = RightEigenX(c2tilde[q])
+            // set
+            // wij[ NK * q + 1] = w1tilde[q]
+            // wij[ NK * q + 2] = w2tilde[q]
+            // wij[ NK * q + (l>2)] = 0.0
 
             // slope limiting 
             for (int q = 0; q < NCONS; ++q)
@@ -954,8 +1007,8 @@ void update_struct_do_advance_weights(struct UpdateStruct update, real dt)
 
 int main()
 {
-    const int ni = 1024;
-    const int nj = 1;
+    const int ni = 64;
+    const int nj = 64;
     const int fold = 10;
     const real x0 = 0.0;
     const real x1 = 1.0;
@@ -974,9 +1027,9 @@ int main()
 
     int iteration = 0;
     real time = 0.0;
-    real dt = dx * 0.04;
+    real dt = dx * CFL;
 
-    while (time < 0.1)
+    while (time < 0.228)
     {
         clock_t start = clock();
 
