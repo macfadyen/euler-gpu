@@ -1,10 +1,11 @@
+// Schaal shock tube problem 5.2
 #include <stdio.h>
 #include <time.h>
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
 
-#define ADIABATIC_GAMMA (5.0 / 3.0)
+#define ADIABATIC_GAMMA (7.0 / 5.0)
 #define PI 3.14159265359
 #define min2(a, b) (a) < (b) ? (a) : (b)
 #define max2(a, b) (a) > (b) ? (a) : (b)
@@ -12,9 +13,9 @@
 #define max3(a, b, c) max2(a, max2(b, c))
 #define sign(x) copysign(1.0, x)
 #define minabs(a, b, c) min3(fabs(a), fabs(b), fabs(c))
-#define maxabs(a, b, c, d, e) max2(max2(fabs(a), fabs(b)), max3(fabs(c), fabs(d), fabs(e)))
+#define maxabs5(a, b, c, d, e) max2(max2(fabs(a), fabs(b)), max3(fabs(c), fabs(d), fabs(e)))
 
-#define BETA 1.0
+#define BETA_TVD 0.5
 #define CFL 0.03
 
 typedef double real;
@@ -22,10 +23,10 @@ typedef double real;
 #define power pow
 
 #define NDIM 2
-#define DG_ORDER 2
-#define NFACE 2
-#define NCELL 4
-#define NK    3  // number of basis polynomials
+#define DG_ORDER 3
+#define NFACE 3
+#define NCELL 9
+#define NK    6  // number of basis polynomials
 #define NCONS 4  // number of conserved variables
 
 #define SQRT_THREE square_root(3.0)
@@ -35,10 +36,12 @@ struct Cells cell;
 struct Cells
 {
     struct Nodes
-    {        
-        real phi[NK];
-        real dphidx[NK];
-        real dphidy[NK];
+    {
+        real xsi_x;         // normalized cell x coordinate [-1,1]
+        real xsi_y;         // normalized cell y coordinate [-1,1]       
+        real phi[NK];       // cell basis functions phi(xsi_x,xsi_y)
+        real dphidx[NK];    // xsi_x derivatives of basis functions
+        real dphidy[NK];    // xsi_y derivatives of basis functions
         real gw;
     }; 
 
@@ -82,26 +85,6 @@ real p2_prime(const real xsi)
     return sqrt(5.0) * 0.5 * (6.0 * xsi);
 }
 
-real p3(const real xsi)
-{
-    return sqrt(7.0) * 0.5 * (5.0 * xsi * xsi * xsi - 3.0 * xsi);
-}
-
-real p3_prime(const real xsi)
-{
-    return sqrt(7.0) * 0.5 * (15.0 * xsi * xsi - 3.0);
-}
-
-real p4(const real xsi)
-{
-    return 3.0 / 8.0 * (35.0 * xsi * xsi * xsi * xsi - 30.0 * xsi * xsi + 3.0);
-}
-
-real p4_prime(const real xsi)
-{
-    return 3.0 / 8.0 * (140.0 * xsi * xsi * xsi - 60.0 * xsi);
-}
-
 struct Cells set_cell(void)
 {
     // reference: https://en.wikipedia.org/wiki/Gaussian_quadrature
@@ -111,42 +94,18 @@ struct Cells set_cell(void)
         real xsi[NFACE] = {0.0};                                // Gaussian quadrature point
         real  gw[NFACE] = {2.0};                                // 1D Gaussian weight
 
-        real xsi_gl[NFACE+2] = {-1.0, 0.0, 1.0};                // Gauss-Lobatto quadrature points
-        real  glw[NFACE+2] = {1.0/3.0, 4.0/3.0, 1.0/3.0};       // 1D Gauss-Lobatto weights
-
     #elif (DG_ORDER == 2)
 
         real xsi[NFACE] = {-1.0/sqrt(3.0), 1.0/sqrt(3.0)};      // Gaussian quadrature points
         real  gw[NFACE] = {1.0, 1.0};                           // 1D Gaussian weights
 
-        real xsi_gl[NFACE+2] = {-1.0, -sqrt(1.0/5.0), sqrt(1.0/5.0), 1.0}; // Gauss-Lobatto quadrature points
-        real  glw[NFACE+2] = {1.0/6.0, 5.0/6.0, 5.0/6.0, 1.0/6.0};         // 1D Gauss-Lobatto weights
-    
     #elif (DG_ORDER == 3)
 
         real xsi[NFACE] = {-sqrt(3.0/5.0), 0.0, sqrt(3.0/5.0)}; // Gaussian quadrature points
         real  gw[NFACE] = {5.0/9.0, 8.0/9.0, 5.0/9.0};          // 1D Gaussian weights
-    
-        real xsi_gl[NFACE+2] = {-1.0,-sqrt(3.0/7.0),0.0,sqrt(3.0/7.0),1.0};                    // Gauss-Lobatto quadrature points
-        real  glw[NFACE+2] = {1.0/10.0, 49.0/90.0, 32.0/45.0, 49.0/90.0, 1.0/10.0};             // 1D Gauss-Lobatto weights
-
-    #elif (DG_ORDER == 4)
-
-        real xsi[NFACE] = {-sqrt(3.0/7.0+2.0/7.0*sqrt(6.0/5.0)), -sqrt(3.0/7.0-2.0/7.0*sqrt(6.0/5.0)), sqrt(3.0/7.0-2.0/7.0*sqrt(6.0/5.0)), sqrt(3.0/7.0+2.0/7.0*sqrt(6.0/5.0))}; // Gaussian quadrature points
-        real  gw[NFACE] = {(18.0 - sqrt(30.0))/36.0, (18.0 + sqrt(30.0))/36.0, (18.0 + sqrt(30.0))/36.0, (18.0 - sqrt(30.0))/36.0};  // 1D Gaussian weights    
-    
-        real xsi_gl[NFACE+2] = {-1.0, -sqrt(1.0/3.0+2.0*sqrt(7.0)/21.0), -sqrt(1.0/3.0-2.0*sqrt(7.0)/21.0), sqrt(1.0/3.0-2.0*sqrt(7.0)/21.0), sqrt(1.0/3.0+2.0*sqrt(7.0)/21.0),1.0}; // Gauss-Lobatto quadrature points
-        real  glw[NFACE+2] = {1.0/15.0, (14.0-sqrt(7.0))/30.0, (14.0+sqrt(7.0))/30.0, (14.0+sqrt(7.0))/30.0, (14.0-sqrt(7.0))/30.0, 1.0/15.0};   // 1D Gauss-Lobatto weights
-    
-    #elif (DG_ORDER == 5)
-
-        real xsi[NFACE] = {-1.0/3.0*sqrt(5.0+2.0*sqrt(10.0/7.0)), -1.0/3.0*sqrt(5.0-2.0*sqrt(10.0/7.0)), 0.0, 1.0/3.0*sqrt(5.0-2.0*sqrt(10.0/7.0)), 1.0/3.0*sqrt(5.0+2.0*sqrt(10.0/7.0))}; // Gaussian quadrature points
-        real  gw[NFACE] = {(322.0-13.0*sqrt(70.0))/900.0, (322.0+13.0*sqrt(70.0))/900.0, 128.0/225.0, (322.0+13.0*sqrt(70.0))/900.0, (322.0-13.0*sqrt(70.0))/900.0};          // 1D Gaussian weights    
-    
-        real xsi_gl[NFACE+2] = {-1.0, -sqrt(5.0/11.0+2.0/11.0*sqrt(5.0/3.0)), -sqrt(5.0/11.0-2.0/11.0*sqrt(5.0/3.0)), 0.0, sqrt(5.0/11.0-2.0/11.0*sqrt(5.0/3.0)), sqrt(5.0/11.0+2.0/11.0*sqrt(5.0/3.0)), 1.0};  // Gauss-Lobatto quadrature points
-        real  glw[NFACE+2] = {1.0/21.0, (124.0-7.0*sqrt(15.0))/350.0, (124.0+7.0*sqrt(15.0))/350.0, 256.0/525.0, (124.0+7.0*sqrt(15.0))/350.0, (124.0-7.0*sqrt(15.0))/350.0, 1.0/21.0}; // 1D Gauss-Lobatto weights
 
     #endif
+
 
     // cell nodes
 
@@ -156,6 +115,9 @@ struct Cells set_cell(void)
     {
         for (int j = 0; j < NFACE; ++j)
         {   
+            cell.node[nc].xsi_x     = xsi[i];
+            cell.node[nc].xsi_y     = xsi[j];
+            
             // nk = 0
             cell.node[nc].phi[0]    = p0(xsi[i]) * p0(xsi[j]);
             cell.node[nc].dphidx[0] = p0_prime(xsi[i]) * p0(xsi[j]);
@@ -172,78 +134,6 @@ struct Cells set_cell(void)
             cell.node[nc].phi[2]    = p1(xsi[i]) * p0(xsi[j]);
             cell.node[nc].dphidx[2] = p1_prime(xsi[i]) * p0(xsi[j]);
             cell.node[nc].dphidy[2] = p1(xsi[i]) * p0_prime(xsi[j]);
-            
-            #endif
-            
-            #if (DG_ORDER >= 3)
-            
-            // nk = 3
-            cell.node[nc].phi[3]    = p0(xsi[i]) * p2(xsi[j]);
-            cell.node[nc].dphidx[3] = p0_prime(xsi[i]) * p2(xsi[j]);
-            cell.node[nc].dphidy[3] = p0(xsi[i]) * p2_prime(xsi[j]);
-            
-            // nk = 4
-            cell.node[nc].phi[4]    = p1(xsi[i]) * p1(xsi[j]);
-            cell.node[nc].dphidx[4] = p1_prime(xsi[i]) * p1(xsi[j]);
-            cell.node[nc].dphidy[4] = p1(xsi[i]) * p1_prime(xsi[j]); 
-            
-            // nk = 5
-            cell.node[nc].phi[5]    = p2(xsi[i]) * p0(xsi[j]);
-            cell.node[nc].dphidx[5] = p2_prime(xsi[i]) * p0(xsi[j]);
-            cell.node[nc].dphidy[5] = p2(xsi[i]) * p0_prime(xsi[j]);                       
-            
-            #endif
-
-            #if (DG_ORDER >= 4)
-
-            // nk = 6
-            cell.node[nc].phi[6]    = p0(xsi[i]) * p3(xsi[j]);
-            cell.node[nc].dphidx[6] = p0_prime(xsi[i]) * p3(xsi[j]);
-            cell.node[nc].dphidy[6] = p0(xsi[i]) * p3_prime(xsi[j]);
-            
-            // nk = 7
-            cell.node[nc].phi[7]    = p1(xsi[i]) * p2(xsi[j]);
-            cell.node[nc].dphidx[7] = p1_prime(xsi[i]) * p2(xsi[j]);
-            cell.node[nc].dphidy[7] = p1(xsi[i]) * p2_prime(xsi[j]);
-            
-            // nk = 8
-            cell.node[nc].phi[8]    = p2(xsi[i]) * p1(xsi[j]);
-            cell.node[nc].dphidx[8] = p2_prime(xsi[i]) * p1(xsi[j]);
-            cell.node[nc].dphidy[8] = p2(xsi[i]) * p1_prime(xsi[j]);
-
-            // nk = 9
-            cell.node[nc].phi[9]    = p3(xsi[i]) * p0(xsi[j]);
-            cell.node[nc].dphidx[9] = p3_prime(xsi[i]) * p0(xsi[j]);
-            cell.node[nc].dphidy[9] = p3(xsi[i]) * p0_prime(xsi[j]);
-            
-            #endif
-
-            #if (DG_ORDER >= 5)
-
-            // nk = 10
-            cell.node[nc].phi[10]    = p0(xsi[i]) * p4(xsi[j]);
-            cell.node[nc].dphidx[10] = p0_prime(xsi[i]) * p4(xsi[j]);
-            cell.node[nc].dphidy[10] = p0(xsi[i]) * p4_prime(xsi[j]);
-
-            // nk = 11
-            cell.node[nc].phi[11]    = p1(xsi[i]) * p3(xsi[j]);
-            cell.node[nc].dphidx[11] = p1_prime(xsi[i]) * p3(xsi[j]);
-            cell.node[nc].dphidy[11] = p1(xsi[i]) * p3_prime(xsi[j]);            
-
-            // nk = 12
-            cell.node[nc].phi[12]    = p2(xsi[i]) * p2(xsi[j]);
-            cell.node[nc].dphidx[12] = p2_prime(xsi[i]) * p2(xsi[j]);
-            cell.node[nc].dphidy[12] = p2(xsi[i]) * p2_prime(xsi[j]);
-
-            // nk = 13
-            cell.node[nc].phi[13]    = p3(xsi[i]) * p1(xsi[j]);
-            cell.node[nc].dphidx[13] = p3_prime(xsi[i]) * p1(xsi[j]);
-            cell.node[nc].dphidy[13] = p3(xsi[i]) * p1_prime(xsi[j]);
-
-            // nk = 14
-            cell.node[nc].phi[14]    = p4(xsi[i]) * p0(xsi[j]);
-            cell.node[nc].dphidx[14] = p4_prime(xsi[i]) * p0(xsi[j]);
-            cell.node[nc].dphidy[14] = p4(xsi[i]) * p0_prime(xsi[j]);
 
             #endif
             
@@ -261,8 +151,10 @@ struct Cells set_cell(void)
 
     for (int n = 0; n < NFACE; ++n)
     {
-        // left face (x = -1)
-        
+        // left face (xsi_x = -1.0)
+        cell.node[nc].xsi_x     = -1.0;
+        cell.node[nc].xsi_y     = xsi[n];
+
         // nk = 0
         cell.faceli[n].phi[0]    = p0(-1.0) * p0(xsi[n]);
         cell.faceli[n].dphidx[0] = p0_prime(-1.0) * p0(xsi[n]);
@@ -301,62 +193,11 @@ struct Cells set_cell(void)
         
         #endif
 
-        #if (DG_ORDER >= 4)
-
-        // nk = 6
-        cell.node[nc].phi[6]    = p0(-1.0) * p3(xsi[n]);
-        cell.node[nc].dphidx[6] = p0_prime(-1.0) * p3(xsi[n]);
-        cell.node[nc].dphidy[6] = p0(-1.0) * p3_prime(xsi[n]);
-            
-        // nk = 7
-        cell.node[nc].phi[7]    = p1(-1.0) * p2(xsi[n]);
-        cell.node[nc].dphidx[7] = p1_prime(-1.0) * p2(xsi[n]);
-        cell.node[nc].dphidy[7] = p1(-1.0) * p2_prime(xsi[n]);
-            
-        // nk = 8
-        cell.node[nc].phi[8]    = p2(-1.0) * p1(xsi[n]);
-        cell.node[nc].dphidx[8] = p2_prime(-1.0) * p1(xsi[n]);
-        cell.node[nc].dphidy[8] = p2(-1.0) * p1_prime(xsi[n]);
-
-        // nk = 9
-        cell.node[nc].phi[9]    = p3(-1.0) * p0(xsi[n]);
-        cell.node[nc].dphidx[9] = p3_prime(-1.0) * p0(xsi[n]);
-        cell.node[nc].dphidy[9] = p3(-1.0) * p0_prime(xsi[n]);
-        
-        #endif
-
-        #if (DG_ORDER >= 5)
-
-        // nk = 10
-        cell.node[nc].phi[10]    = p0(-1.0) * p4(xsi[n]);
-        cell.node[nc].dphidx[10] = p0_prime(-1.0) * p4(xsi[n]);
-        cell.node[nc].dphidy[10] = p0(-1.0) * p4_prime(xsi[n]);
-
-        // nk = 11
-        cell.node[nc].phi[11]    = p1(-1.0) * p3(xsi[n]);
-        cell.node[nc].dphidx[11] = p1_prime(-1.0) * p3(xsi[n]);
-        cell.node[nc].dphidy[11] = p1(-1.0) * p3_prime(xsi[n]);            
-
-        // nk = 12
-        cell.node[nc].phi[12]    = p2(-1.0) * p2(xsi[n]);
-        cell.node[nc].dphidx[12] = p2_prime(-1.0) * p2(xsi[n]);
-        cell.node[nc].dphidy[12] = p2(-1.0) * p2_prime(xsi[n]);
-
-        // nk = 13
-        cell.node[nc].phi[13]    = p3(-1.0) * p1(xsi[n]);
-        cell.node[nc].dphidx[13] = p3_prime(-1.0) * p1(xsi[n]);
-        cell.node[nc].dphidy[13] = p3(-1.0) * p1_prime(xsi[n]);
-
-        // nk = 14
-        cell.node[nc].phi[14]    = p4(-1.0) * p0(xsi[n]);
-        cell.node[nc].dphidx[14] = p4_prime(-1.0) * p0(xsi[n]);
-        cell.node[nc].dphidy[14] = p4(-1.0) * p0_prime(xsi[n]);
-
-        #endif
-
         cell.faceli[n].gw = gw[n] * (-1.0); // 1D Gaussian weight * nhat
 
         // right face (x = +1)
+        cell.node[nc].xsi_x     = 1.0;
+        cell.node[nc].xsi_y     = xsi[n];
 
         // nk = 0
         cell.faceri[n].phi[0]    = p0(1.0) * p0(xsi[n]);
@@ -396,62 +237,12 @@ struct Cells set_cell(void)
         
         #endif
 
-        #if (DG_ORDER >= 4)
-
-        // nk = 6
-        cell.node[nc].phi[6]    = p0(1.0) * p3(xsi[n]);
-        cell.node[nc].dphidx[6] = p0_prime(1.0) * p3(xsi[n]);
-        cell.node[nc].dphidy[6] = p0(1.0) * p3_prime(xsi[n]);
-            
-        // nk = 7
-        cell.node[nc].phi[7]    = p1(1.0) * p2(xsi[n]);
-        cell.node[nc].dphidx[7] = p1_prime(1.0) * p2(xsi[n]);
-        cell.node[nc].dphidy[7] = p1(1.0) * p2_prime(xsi[n]);
-            
-        // nk = 8
-        cell.node[nc].phi[8]    = p2(1.0) * p1(xsi[n]);
-        cell.node[nc].dphidx[8] = p2_prime(1.0) * p1(xsi[n]);
-        cell.node[nc].dphidy[8] = p2(1.0) * p1_prime(xsi[n]);
-
-        // nk = 9
-        cell.node[nc].phi[9]    = p3(1.0) * p0(xsi[n]);
-        cell.node[nc].dphidx[9] = p3_prime(1.0) * p0(xsi[n]);
-        cell.node[nc].dphidy[9] = p3(1.0) * p0_prime(xsi[n]);
-        
-        #endif
-
-        #if (DG_ORDER >= 5)
-
-        // nk = 10
-        cell.node[nc].phi[10]    = p0(1.0) * p4(xsi[n]);
-        cell.node[nc].dphidx[10] = p0_prime(1.0) * p4(xsi[n]);
-        cell.node[nc].dphidy[10] = p0(1.0) * p4_prime(xsi[n]);
-
-        // nk = 11
-        cell.node[nc].phi[11]    = p1(1.0) * p3(xsi[n]);
-        cell.node[nc].dphidx[11] = p1_prime(1.0) * p3(xsi[n]);
-        cell.node[nc].dphidy[11] = p1(1.0) * p3_prime(xsi[n]);            
-
-        // nk = 12
-        cell.node[nc].phi[12]    = p2(1.0) * p2(xsi[n]);
-        cell.node[nc].dphidx[12] = p2_prime(1.0) * p2(xsi[n]);
-        cell.node[nc].dphidy[12] = p2(1.0) * p2_prime(xsi[n]);
-
-        // nk = 13
-        cell.node[nc].phi[13]    = p3(1.0) * p1(xsi[n]);
-        cell.node[nc].dphidx[13] = p3_prime(1.0) * p1(xsi[n]);
-        cell.node[nc].dphidy[13] = p3(1.0) * p1_prime(xsi[n]);
-
-        // nk = 14
-        cell.node[nc].phi[14]    = p4(1.0) * p0(xsi[n]);
-        cell.node[nc].dphidx[14] = p4_prime(1.0) * p0(xsi[n]);
-        cell.node[nc].dphidy[14] = p4(1.0) * p0_prime(xsi[n]);
-
-        #endif
 
         cell.faceri[n].gw = gw[n] * (1.0); // 1D Gaussian weight * nhat
 
         // bottom face (y = -1)
+        cell.node[nc].xsi_x     = xsi[n];
+        cell.node[nc].xsi_y     = -1.0;
 
         // nk = 0
         cell.facelj[n].phi[0]    = p0(xsi[n]) * p0(-1.0);
@@ -491,62 +282,11 @@ struct Cells set_cell(void)
         
         #endif  
 
-        #if (DG_ORDER >= 4)
-
-        // nk = 6
-        cell.node[nc].phi[6]    = p0(xsi[n]) * p3(-1.0);
-        cell.node[nc].dphidx[6] = p0_prime(xsi[n]) * p3(-1.0);
-        cell.node[nc].dphidy[6] = p0(xsi[n]) * p3_prime(-1.0);
-            
-        // nk = 7
-        cell.node[nc].phi[7]    = p1(xsi[n]) * p2(-1.0);
-        cell.node[nc].dphidx[7] = p1_prime(xsi[n]) * p2(-1.0);
-        cell.node[nc].dphidy[7] = p1(xsi[n]) * p2_prime(-1.0);
-            
-        // nk = 8
-        cell.node[nc].phi[8]    = p2(xsi[n]) * p1(-1.0);
-        cell.node[nc].dphidx[8] = p2_prime(xsi[n]) * p1(-1.0);
-        cell.node[nc].dphidy[8] = p2(xsi[n]) * p1_prime(-1.0);
-
-        // nk = 9
-        cell.node[nc].phi[9]    = p3(xsi[n]) * p0(-1.0);
-        cell.node[nc].dphidx[9] = p3_prime(xsi[n]) * p0(-1.0);
-        cell.node[nc].dphidy[9] = p3(xsi[n]) * p0_prime(-1.0);
-            
-        #endif
-
-        #if (DG_ORDER >= 5)
-
-        // nk = 10
-        cell.node[nc].phi[10]    = p0(xsi[n]) * p4(-1.0);
-        cell.node[nc].dphidx[10] = p0_prime(xsi[n]) * p4(-1.0);
-        cell.node[nc].dphidy[10] = p0(xsi[n]) * p4_prime(-1.0);
-
-        // nk = 11
-        cell.node[nc].phi[11]    = p1(xsi[n]) * p3(-1.0);
-        cell.node[nc].dphidx[11] = p1_prime(xsi[n]) * p3(-1.0);
-        cell.node[nc].dphidy[11] = p1(xsi[n]) * p3_prime(-1.0);            
-
-        // nk = 12
-        cell.node[nc].phi[12]    = p2(xsi[n]) * p2(-1.0);
-        cell.node[nc].dphidx[12] = p2_prime(xsi[n]) * p2(-1.0);
-        cell.node[nc].dphidy[12] = p2(xsi[n]) * p2_prime(-1.0);
-
-        // nk = 13
-        cell.node[nc].phi[13]    = p3(xsi[n]) * p1(-1.0);
-        cell.node[nc].dphidx[13] = p3_prime(xsi[n]) * p1(-1.0);
-        cell.node[nc].dphidy[13] = p3(xsi[n]) * p1_prime(-1.0);
-
-        // nk = 14
-        cell.node[nc].phi[14]    = p4(xsi[n]) * p0(-1.0);
-        cell.node[nc].dphidx[14] = p4_prime(xsi[n]) * p0(-1.0);
-        cell.node[nc].dphidy[14] = p4(xsi[n]) * p0_prime(-1.0);
-
-        #endif
-
         cell.facelj[n].gw = gw[n] * (-1.0); // 1D Gaussian weight * nhat
 
         // top face (y = +1)
+        cell.node[nc].xsi_x     = xsi[n];
+        cell.node[nc].xsi_y     = 1.0;
 
         // nk = 0
         cell.facerj[n].phi[0]    = p0(xsi[n]) * p0(1.0);
@@ -585,142 +325,38 @@ struct Cells set_cell(void)
         
         #endif
 
-        #if (DG_ORDER >= 4)
-
-        // nk = 6
-        cell.node[nc].phi[6]    = p0(xsi[n]) * p3(1.0);
-        cell.node[nc].dphidx[6] = p0_prime(xsi[n]) * p3(1.0);
-        cell.node[nc].dphidy[6] = p0(xsi[n]) * p3_prime(1.0);
-            
-        // nk = 7
-        cell.node[nc].phi[7]    = p1(xsi[n]) * p2(1.0);
-        cell.node[nc].dphidx[7] = p1_prime(xsi[n]) * p2(1.0);
-        cell.node[nc].dphidy[7] = p1(xsi[n]) * p2_prime(1.0);
-            
-        // nk = 8
-        cell.node[nc].phi[8]    = p2(xsi[n]) * p1(1.0);
-        cell.node[nc].dphidx[8] = p2_prime(xsi[n]) * p1(1.0);
-        cell.node[nc].dphidy[8] = p2(xsi[n]) * p1_prime(1.0);
-
-        // nk = 9
-        cell.node[nc].phi[9]    = p3(xsi[n]) * p0(1.0);
-        cell.node[nc].dphidx[9] = p3_prime(xsi[n]) * p0(1.0);
-        cell.node[nc].dphidy[9] = p3(xsi[n]) * p0_prime(1.0);
-            
-        #endif
-
-        #if (DG_ORDER >= 5)
-
-        // nk = 10
-        cell.node[nc].phi[10]    = p0(xsi[n]) * p4(1.0);
-        cell.node[nc].dphidx[10] = p0_prime(xsi[n]) * p4(1.0);
-        cell.node[nc].dphidy[10] = p0(xsi[n]) * p4_prime(1.0);
-
-        // nk = 11
-        cell.node[nc].phi[11]    = p1(xsi[n]) * p3(1.0);
-        cell.node[nc].dphidx[11] = p1_prime(xsi[n]) * p3(1.0);
-        cell.node[nc].dphidy[11] = p1(xsi[n]) * p3_prime(1.0);            
-
-        // nk = 12
-        cell.node[nc].phi[12]    = p2(xsi[n]) * p2(1.0);
-        cell.node[nc].dphidx[12] = p2_prime(xsi[n]) * p2(1.0);
-        cell.node[nc].dphidy[12] = p2(xsi[n]) * p2_prime(1.0);
-
-        // nk = 13
-        cell.node[nc].phi[13]    = p3(xsi[n]) * p1(1.0);
-        cell.node[nc].dphidx[13] = p3_prime(xsi[n]) * p1(1.0);
-        cell.node[nc].dphidy[13] = p3(xsi[n]) * p1_prime(1.0);
-
-        // nk = 14
-        cell.node[nc].phi[14]    = p4(xsi[n]) * p0(1.0);
-        cell.node[nc].dphidx[14] = p4_prime(xsi[n]) * p0(1.0);
-        cell.node[nc].dphidy[14] = p4(xsi[n]) * p0_prime(1.0);
-
-        #endif
-
         cell.facerj[n].gw = gw[n] * (1.0); // 1D Gaussian weight * nhat
     }
     return cell;
 }
 
-real minmod(real w1, real w0l, real w0, real w0r, real dx)
+real minmod(real a, real b, real c)
 {
-    real a = w1 / SQRT_THREE;
-    real b = (w0 - w0l) * BETA;
-    real c = (w0r - w0) * BETA;
+    return 0.25 * fabs(sign(a) + sign(b)) * (sign(a) + sign(c)) * minabs(a, b, c);
+}
+
+real minmodTVB(real w1, real w0l, real w0, real w0r, real dl)
+{
+    real a = w1 * SQRT_THREE;
+    real b = (w0 - w0l) * BETA_TVD;
+    real c = (w0r - w0) * BETA_TVD;
 
     const real M = 0.0; //Cockburn & Shu, JCP 141, 199 (1998) eq. 3.7 suggest M~50.0
 
-    if (fabs(a) <= M * dx * dx)
+    if (fabs(a) <= M * dl * dl)
     {        
         return w1;
     }
     else
     {
-        return 0.25 * SQRT_THREE * fabs(sign(a) + sign(b)) * (sign(a) + sign(c)) * minabs(a, b, c);
+        real x1 = fabs(sign(a) + sign(b)) * (sign(a) + sign(c));
+        real x2 = minabs(a, b, c);
+        real x = (0.25 / SQRT_THREE) * x1 * x2;
+
+        return x;
     }
 }
 
-/*
-
-void zero_weights_to_characteristic_x(const real *cons, real *charx)
-{
-    real prim[NCONS];
-
-    //conserved_to_primitive(cons,prim);
-
-    real rho = 1.5;
-    real vx = 0.5;
-    real vy = 0.25;
-    real pressure = 0.75;
-
-    prim[0] = rho;
-    prim[1] = vx;
-    prim[2] = vy;
-    prim[3] = pressure;
-
-    const real g1 = ADIABATIC_GAMMA - 1.0;
-
-    real cs2 = primitive_to_sound_speed_squared(prim);
-
-    real cs  = square_root(cs2);
-    
-    real k = 0.5 * (vx * vx + vy * vy);
-    real h = (cs2 / g1) + k;
-    real phi = g1 * k;
-    real beta = 1.0 / (2.0 * cs2);
-
-    // Schaal+ Appendix E
-
-    real lx[4][4] = {
-          {beta*(phi+cs*vx),  -beta*(g1*vx+cs),  -beta*g1*vy,       beta*g1},
-          {(1.0-2.0*beta*phi), 2.0*beta*g1*vx,   2.0*beta*g1*vy,    -2.0*beta*g1},
-          {beta*(phi-cs*vx),  -beta*(g1*vx-cs),  -beta*g1*vy,       beta*g1},
-          {vy,                      0.0,            -1.0,            0.0}
-                    };
-
-    real ly[4][4] = {
-          {beta*(phi+cs*vy),  -beta*g1*vx,  -beta*(g1*vy+cs),       beta*g1},
-          {(1.0-2.0*beta*phi), 2.0*beta*g1*vx,   2.0*beta*g1*vy,    -2.0*beta*g1},
-          {beta*(phi-cs*vy),  -beta*g1*vx,  -beta*(g1*vy-cs),       beta*g1},
-          {-vx,                      1.0,            0.0,            0.0}
-                    };
-
-    real rx[4][4] = {
-          { 1.0,        1.0,        1.0,        0.0},
-          {(vx - cs),   vx,     (vx + cs),      0.0},
-          {  vy,        vy,         vy,        -1.0},
-          {(h - cs*vx), k,      (h + cs*vx),    -vy}
-                    };
-
-    real ry[4][4] = {
-          { 1.0,        1.0,        1.0,        0.0},
-          {vx,   vx,     vx,      1.0},
-          {  vy-cs,        vy,         vy+cs,        0.0},
-          {(h - cs*vy), k,      (h + cs*vy),    vx}
-                    };          
-}
-*/
 
 void conserved_to_primitive(const real *cons, real *prim)
 {
@@ -900,110 +536,6 @@ void riemann_hllc(const real *pl, const real *pr, real *flux, int direction)
 
 }
 
-/*void characterstic_slope_limiter(const real *wij, real *w0l, real *w0r, real *w0b, real *w0t)
-{
-    real w0[NCONS];
-    real w1[NCONS];
-    real w2[NCONS];
-
-    // slopes of conserved variables
-    real a[NCONS];
-    real b[NCONS];    
-    real c[NCONS];
-    real d[NCONS];    
-    real e[NCONS];
-
-    // slopes of characteristic variables
-    real ca[NCONS];
-    real cb[NCONS];    
-    real cc[NCONS];
-    real cd[NCONS];    
-    real ce[NCONS];
-    
-    //real prim[NCONS];
-
-    for (int q = 0; q < NCONS; ++q)
-    {
-        w0[q] = wij[q * NK];
-        w1[q] = wij[q * NK + 1]; // y slopes
-        w2[q] = wij[q * NK + 2]; // x slopes
-
-        a[q] =  w2[q] / SQRT_THREE;
-        b[q] = (w0[q] - w0l[q]) * BETA;
-        c[q] = (w0r[q] - w0[q]) * BETA;
-
-        d[q] =  w1[q] / SQRT_THREE;
-        e[q] = (w0[q] - w0b[q]) * BETA;
-        f[q] = (w0t[q] - w0[q]) * BETA;
-    }
-    // Use 0th values of the weights, w0, as the conserved variables
-    // to calculate primitive variabbles
-
-    conserved_to_primitive(w0, prim);
-
-    const real cs2 = primitive_to_sound_speed_squared(prim);
-    real cs  = square_root(cs2);
-    const real g1 = ADIABATIC_GAMMA - 1.0;
-
-    real k = 0.5 * (vx * vx + vy * vy);
-    real h = (cs2 / g1) + k;
-    real phi = g1 * k;
-    real beta = 1.0 / (2.0 * cs2);
-
-    // Schaal+ Appendix E
-
-    real lx[4][4] = {
-          {beta*(phi+cs*vx),  -beta*(g1*vx+cs),  -beta*g1*vy,       beta*g1},
-          {(1.0-2.0*beta*phi), 2.0*beta*g1*vx,   2.0*beta*g1*vy,    -2.0*beta*g1},
-          {beta*(phi-cs*vx),  -beta*(g1*vx-cs),  -beta*g1*vy,       beta*g1},
-          {vy,                      0.0,            -1.0,            0.0}
-                    };
-
-    // compute slopes of characterstic variables
-    for (int i = 0, i < NCONS; ++i)
-    {
-        ca[i] = 0.0;
-        cb[i] = 0.0;
-        cc[i] = 0.0;
-        cd[i] = 0.0;
-        ce[i] = 0.0;
-        cf[i] = 0.0;
-
-        for (int j = 0, j < NCONS; ++j)
-        {
-            ca[i] += lx[i][j] * a[j]; // check this
-            cb[i] += lx[i][j] * b[j];
-            cc[i] += lx[i][j] * c[j];
-            cd[i] += lx[i][j] * d[j];
-            ce[i] += lx[i][j] * e[j];
-            cf[i] += lx[i][j] * f[j];
-        }
-    }
-
-                    // x slopes
-                wtilde[ NK * q + 2] = minmodTVB(wij[ NK * q + 2], wij[ NK * q + 0], wli[ NK * q + 0], wri[ NK * q + 0], dx);
-                // y slopes 
-                wtilde[ NK * q + 1] = minmodTVB(wij[ NK * q + 1], wij[ NK * q + 0], wlj[ NK * q + 0], wrj[ NK * q + 0], dy);
-                
-                if (wtilde[ NK * q + 2] != wij[ NK * q + 2])
-                {
-                    wij[ NK * q + 2] = wtilde[ NK * q + 2];
-                    for (int l = 3; l < NK; ++l)
-                        {
-                            wij[ NK * q + l] = 0.0;
-                        }
-                }
-                if (wtilde[ NK * q + 1] != wij[ NK * q + 1])
-                {
-                    wij[ NK * q + 1] = wtilde[ NK * q + 1];
-                    for (int l = 3; l < NK; ++l)
-                        {
-                            wij[ NK * q + l] = 0.0;
-                        }
-                }
-
-}
-*/
 void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, real y1)
 {
     real dx = (x1 - x0) / ni;
@@ -1013,107 +545,64 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
     {
         for (int j = 0; j < nj; ++j)
         {
-            real x = x0 + (i + 0.5) * dx;
-            real y = y0 + (j + 0.5) * dy;
+
+            real xl = x0 + i * dx; // left side of cell
+            real yl = y0 + j * dy; // bottom side of cell
+
             real xmid = 0.5 * (x0 + x1);
             real ymid = 0.5 * (y0 + y1);
+
             real *wij = &weights[NCONS * NK * (i * nj + j)];
-            real r2 = power(x - xmid, 2) + power(y - ymid, 2);
-
-            //real amag = 1e-2;
-
-            //wij[0 * NK] = 1.0 + amag * 1.0 * sin(2.0*PI*x);
-            //wij[1 * NK] = 1.0 + amag * (-1.0) * sin(2.0*PI*x);
-            //wij[2 * NK] = amag *  (1.0) * sin(2.0*PI*x);
-            //wij[3 * NK] = (1.0 / ADIABATIC_GAMMA) / (ADIABATIC_GAMMA -1.0) + amag * 1.5 * sin(2.0*PI*x);
-            //if (j==0) printf("%f %e %e\n",x,sin(2.0*PI*x),wij[1 * NK]);
-            
-            /*real prim[NCONS];
-            real cons[NCONS];
-            real flux[NCONS];
-            real rho, vx, vy, pressure; 
-
-            // For |y| > 0.25, we set Vx = -0.5 and ρ = 1, for |y| ≤ 0.25, Vx = 0.5 and ρ = 2. 
-/*
-            if ( y < 0.75 * (y1-y0) && y > 0.25*(y1-y0) )
-            {
-                vx = 0.5;
-                rho = 2.0;
-            }
-            else
-            {
-                vx = -0.5;
-                rho = 1.0;
-            }
-            vy = 0.02*sin(2.0*PI*x);
-            pressure = 2.5;
-            
-            //rho      = 2.0 + 0.5*sin(2.0*PI*x);
-            //vx       = 3.0;
-            //vy       = 0.0;
-            //pressure = 2.0;
-
-            prim[0] = rho;
-            prim[1] = vx;
-            prim[2] = vy;
-            prim[3] = pressure;
-
-            primitive_to_conserved(prim,cons);
-            //primitive_to_flux_vector(prim,flux,0);
-
-            //printf("cons: %f %f %f %f\n", cons[0],cons[1],cons[2],cons[3]);
-            //printf("flux %f %f %f %f\n\n", flux[0],flux[1],flux[2],flux[3]);
-
-            wij[0 * NK] = cons[0];
-            wij[1 * NK] = cons[1];
-            wij[2 * NK] = cons[2];
-            wij[3 * NK] = cons[3]; 
-*/
-            //if (square_root(r2) < 0.125)
 
             real prim[NCONS];
             real cons[NCONS];
             real rho, vx, vy, pressure;
 
-            if (x < xmid)    
+            for (int l = 0; l < NK; ++l)
             {
-                rho = 1.0;
-                pressure = 1.0;
+                for (int q = 0; q < NCONS; ++q)
+                {
+                    wij[q * NK + l] = 0.0;
+                }
             }
-            else
-            {
-                rho = 0.125;
-                pressure = 0.1;
+
+            // loop over cell quadrature points
+            for (int qp = 0; qp < NCELL; ++qp){
+
+                real xq = xl + (cell.node[qp].xsi_x / 2.0) * dx;
+                real yq = yl + (cell.node[qp].xsi_y / 2.0) * dy;
+
+                // real r2 = power(xq - xmid, 2) + power(yq - ymid, 2);
+
+                if (xq < xmid)     
+                {
+                    rho = 1.0;
+                    pressure = 1.0;
+                }
+                else
+                {
+                    rho = 0.125;
+                    pressure = 0.1;
+                }
+
+                vx = 0.0;
+                vy = 0.0;
+
+                prim[0] = rho;
+                prim[1] = vx;
+                prim[2] = vy;
+                prim[3] = pressure;
+
+                primitive_to_conserved(prim, cons);
+
+                for (int l = 0; l < NK; ++l)
+                {
+                    for (int q = 0; q < NCONS; ++q)
+                    {
+                        wij[q * NK + l] += 0.25 * cons[q] * cell.node[qp].phi[l] * cell.node[qp].gw;
+                    }
+                }
             }
-            vx = 0.0;
-            vy = 0.0;
-
-            prim[0] = rho;
-            prim[1] = vx;
-            prim[2] = vy;
-            prim[3] = pressure;
-
-            primitive_to_conserved(prim, cons);
-
-            wij[0 * NK] = cons[0];
-            wij[1 * NK] = cons[1];
-            wij[2 * NK] = cons[2];
-            wij[3 * NK] = cons[3]; 
-            /*
-            if (y < ymid)    
-            {
-                wij[0*NK] = 1.0;
-                wij[1*NK] = -0.1;
-                wij[2*NK] = 0.02*sin(6*x);
-                wij[3*NK] = 1.0;
-            }
-            else
-            {
-                wij[0*NK] = 1.0;
-                wij[1*NK] = 0.1;
-                wij[2*NK] = 0.02*sin(6*x);
-                wij[3*NK] = 1.0;
-            }*/
         }
     }
 }
@@ -1129,7 +618,7 @@ struct UpdateStruct
 
     real *weights;
     real *dweights;
-    real *trouble; //
+    real *trouble;
 };
 
 struct UpdateStruct update_struct_new(int ni, int nj, real x0, real x1, real y0, real y1)
@@ -1145,7 +634,6 @@ struct UpdateStruct update_struct_new(int ni, int nj, real x0, real x1, real y0,
     update.weights  = (real*) malloc(ni * nj * NCONS * NK * sizeof(real));
     update.dweights = (real*) malloc(ni * nj * NCONS * NK * sizeof(real));
     update.trouble  = (real*) malloc(ni * nj * sizeof(real));
-
 
     return update;
 }
@@ -1215,8 +703,7 @@ void compute_delta_weights(struct UpdateStruct update)
             int ir = i + 1;
             int jl = j - 1;
             int jr = j + 1;
-            
-            
+                        
             // Outflow BC
             if (il == -1)
                 il += 1;
@@ -1229,19 +716,6 @@ void compute_delta_weights(struct UpdateStruct update)
 
             if (jr == nj)
                 jr -= 1;
-            /*
-            //Periodic BC
-            if (il == -1)
-                il = ni-1;
-
-            if (ir == ni)
-                ir = 0;
-
-            if (jl == -1)
-                jl = nj-1;
-
-            if (jr == nj)
-                jr = 0;
             
             /* */ real *wij = &update.weights[NCONS * NK * (i  * nj + j )];
             /* */ real *dwij=&update.dweights[NCONS * NK * (i  * nj + j )];
@@ -1277,7 +751,7 @@ void compute_delta_weights(struct UpdateStruct update)
                 conserved_to_primitive(consm, primm);
                 conserved_to_primitive(consp, primp);
                 
-                riemann_hllc(primm, primp, flux_x, 0);
+                riemann_hlle(primm, primp, flux_x, 0);
                 
                 for (int q = 0; q < NCONS; ++q)
                 {
@@ -1306,7 +780,7 @@ void compute_delta_weights(struct UpdateStruct update)
                 conserved_to_primitive(consm, primm);
                 conserved_to_primitive(consp, primp);
                 
-                riemann_hllc(primm, primp, flux_x, 0);
+                riemann_hlle(primm, primp, flux_x, 0);
             
                 for (int q = 0; q < NCONS; ++q)
                 {
@@ -1335,7 +809,7 @@ void compute_delta_weights(struct UpdateStruct update)
                 conserved_to_primitive(consm, primm);
                 conserved_to_primitive(consp, primp);
                 
-                riemann_hllc(primm, primp, flux_y, 1);
+                riemann_hlle(primm, primp, flux_y, 1);
 
                 for (int q = 0; q < NCONS; ++q)
                 {
@@ -1364,7 +838,7 @@ void compute_delta_weights(struct UpdateStruct update)
                 conserved_to_primitive(consm, primm);
                 conserved_to_primitive(consp, primp);
                 
-                riemann_hllc(primm, primp, flux_y, 1);
+                riemann_hlle(primm, primp, flux_y, 1);
 
                 for (int q = 0; q < NCONS; ++q)
                 {
@@ -1400,7 +874,8 @@ void compute_delta_weights(struct UpdateStruct update)
                     for (int l = 0; l < NK; ++l)
                     {
                         dwij[NK * q + l] += flux_x[q] * cell.node[n].dphidx[l] * cell.node[n].gw;
-                        dwij[NK * q + l] += flux_y[q] * cell.node[n].dphidy[l] * cell.node[n].gw;   
+                        dwij[NK * q + l] += flux_y[q] * cell.node[n].dphidy[l] * cell.node[n].gw; 
+                        //printf("q = %d l = %d %f %f\n", q, l, flux_x[q] * cell.node[n].dphidx[l] * cell.node[n].gw,flux_y[q] * cell.node[n].dphidy[l] * cell.node[n].gw);  
                     }
                 }
 
@@ -1437,19 +912,16 @@ void add_delta_weights(struct UpdateStruct update, real dt)
     }
 }
 
-void limit_weights(struct UpdateStruct update)
+void mark_troubled_cells(struct UpdateStruct update)
 {
     int ni = update.ni;
     int nj = update.nj;
 
     const real dx = (update.x1 - update.x0) / update.ni;
     const real dy = (update.y1 - update.y0) / update.nj;
-    const real dvol = 4;
+    const real dvol = 4; // in xsi coordinate [-1,1] x [-1,1]
 
-    real cons[NCONS];
-    real prim[NCONS];
-
-    const real ck = 1e30;       //k=1; see Fu & Shu Sec. 3
+    const real ck = 0.6;       //k=1; see Fu & Shu Sec. 3
     //const real ck = 0.03;        //k=1; see Fu & Shu Sec. 3
     //const real ck = 0.03 * 2 ; //k=2; see Fu & Shu Sec. 3
     //const real ck = 0.03 * 4 ; //k=3; see Fu & Shu Sec. 3
@@ -1476,19 +948,6 @@ void limit_weights(struct UpdateStruct update)
 
             if (jr == nj)
                 jr -= 1;
-            /*
-            //Periodic BC
-            if (il == -1)
-                il = ni-1;
-
-            if (ir == ni)
-                ir = 0;
-
-            if (jl == -1)
-                jl = nj-1;
-
-            if (jr == nj)
-                jr = 0;
             
             /* */ real *wij = &update.weights[NCONS * NK * (i  * nj + j )];
 
@@ -1509,49 +968,109 @@ void limit_weights(struct UpdateStruct update)
 
             // l=0 for rho
 
-            real maxpj = maxabs(wij[0], wli[0], wri[0], wlj[0], wrj[0]);
+            real maxpj = maxabs5(wij[0], wli[0], wri[0], wlj[0], wrj[0]);
 
-            real pbb_li = fabs(wij[0] - (4.0 * wli[0] + 8.0 * wli[2]) / dvol);
-            real pbb_ri = fabs(wij[0] - (4.0 * wri[0] - 8.0 * wri[2]) / dvol);
-            real pbb_lj = fabs(wij[0] - (4.0 * wlj[0] + 8.0 * wlj[1]) / dvol);
-            real pbb_rj = fabs(wij[0] - (4.0 * wrj[0] - 8.0 * wrj[1]) / dvol);
+            real pbb_li = fabs(wij[0] - (4.0 * wli[0] + 8.0 * SQRT_THREE * wli[2]) / dvol);
+            real pbb_ri = fabs(wij[0] - (4.0 * wri[0] - 8.0 * SQRT_THREE * wri[2]) / dvol);
+            real pbb_lj = fabs(wij[0] - (4.0 * wlj[0] + 8.0 * SQRT_THREE * wlj[1]) / dvol);
+            real pbb_rj = fabs(wij[0] - (4.0 * wrj[0] - 8.0 * SQRT_THREE * wrj[1]) / dvol);
 
             real trouble_rho = (pbb_li + pbb_ri + pbb_lj + pbb_rj) / maxpj;
 
+            if (j==4)
+            {
             //printf("%d %d %f %f %f %f\n",i,j,(4.0 * wli[0] + 8.0 * wli[2]),wij[0],wli[0],wli[2]);
-            //printf("%d %d %f %f %f %f %f\n",i,j,pbb_li, pbb_ri, pbb_lj, pbb_rj, maxpj);
-
+            //printf("%d %d %f %f %f %f %f %f\n\n",i,j,trouble_rho,pbb_li, pbb_ri, pbb_lj, pbb_rj, maxpj);
+            }
             // l=3 for energy
 
-            /**/ maxpj = maxabs(wij[3*NK+0], wli[3*NK+0], wri[3*NK+0], wlj[3*NK+0], wrj[3*NK+0]);
+            /**/ maxpj = maxabs5(wij[3*NK+0], wli[3*NK+0], wri[3*NK+0], wlj[3*NK+0], wrj[3*NK+0]);
 
-            /**/ pbb_li = fabs(wij[3*NK+0] - (4.0 * wli[3*NK+0] + 8.0 * wli[3*NK+2]) / dvol);
-            /**/ pbb_ri = fabs(wij[3*NK+0] - (4.0 * wri[3*NK+0] - 8.0 * wri[3*NK+2]) / dvol);
-            /**/ pbb_lj = fabs(wij[3*NK+0] - (4.0 * wlj[3*NK+0] + 8.0 * wlj[3*NK+1]) / dvol);
-            /**/ pbb_rj = fabs(wij[3*NK+0] - (4.0 * wrj[3*NK+0] - 8.0 * wrj[3*NK+1]) / dvol);
+            /**/ pbb_li = fabs(wij[3*NK+0] - (4.0 * wli[3*NK+0] + 8.0 * SQRT_THREE * wli[3*NK+2]) / dvol);
+            /**/ pbb_ri = fabs(wij[3*NK+0] - (4.0 * wri[3*NK+0] - 8.0 * SQRT_THREE * wri[3*NK+2]) / dvol);
+            /**/ pbb_lj = fabs(wij[3*NK+0] - (4.0 * wlj[3*NK+0] + 8.0 * SQRT_THREE * wlj[3*NK+1]) / dvol);
+            /**/ pbb_rj = fabs(wij[3*NK+0] - (4.0 * wrj[3*NK+0] - 8.0 * SQRT_THREE * wrj[3*NK+1]) / dvol);
 
             real trouble_e = (pbb_li + pbb_ri + pbb_lj + pbb_rj) / maxpj;
 
             //printf("trouble: %d %d %f %f\n",i,j,trouble_rho,trouble_e);
 
-            *tij = trouble_e;
+            *tij = max2( trouble_rho, trouble_e );
+        }
+    }
+}
 
-            if ( trouble_rho > ck )
+void limit_weights(struct UpdateStruct update)
+{
+    real cons[NCONS];
+    real prim[NCONS];
+    
+    int ni = update.ni;
+    int nj = update.nj;
+
+    const real dx = (update.x1 - update.x0) / update.ni;
+    const real dy = (update.y1 - update.y0) / update.nj;
+
+    real wtilde[NK * NCONS];
+    
+    for (int i = 0; i < ni; ++i)
+    {
+        for (int j = 0; j < nj; ++j)
+        {
+            int il = i - 1;
+            int ir = i + 1;
+            int jl = j - 1;
+            int jr = j + 1;
+                        
+            // Outflow BC
+            if (il == -1)
+                il += 1;
+
+            if (ir == ni)
+                ir -= 1;
+
+            if (jl == -1)
+                jl += 1;
+
+            if (jr == nj)
+                jr -= 1;
+
+            /* */ real *wij = &update.weights[NCONS * NK * (i  * nj + j )];
+
+            const real *wli = &update.weights[NCONS * NK * (il * nj + j )];
+            const real *wri = &update.weights[NCONS * NK * (ir * nj + j )];
+            const real *wlj = &update.weights[NCONS * NK * (i  * nj + jl)];
+            const real *wrj = &update.weights[NCONS * NK * (i  * nj + jr)];
+
+            const real  *tij = &update.trouble[i * nj + j];
+
+            //if (j==4) printf("%f\n",*tij);
+
+            if ( *tij > 0.03 )
             {
-            // Do characteristic slope limiting
-            // slope limiting 
-
                 for (int q = 0; q < NCONS; ++q)
                 {
-                    #if (DG_ORDER == 2)
-
+                    // real minmodTVB(real w1, real w0l, real w0, real w0r, real dl)
+                    
                     // x slopes
-                    wij[ NK * q + 2] = minmod(wij[ NK * q + 2], wli[ NK * q + 0], wij[ NK * q + 0], wri[ NK * q + 0], dx);
-
+                    wtilde[ NK * q + 2] = minmodTVB(wij[ NK * q + 2], wli[ NK * q + 0], wij[ NK * q + 0], wri[ NK * q + 0], dx);
+                    
                     // y slopes 
-                    wij[ NK * q + 1] = minmod(wij[ NK * q + 1], wlj[ NK * q + 0], wij[ NK * q + 0], wrj[ NK * q + 0], dy);
+                    wtilde[ NK * q + 1] = minmodTVB(wij[ NK * q + 1], wlj[ NK * q + 0], wij[ NK * q + 0], wrj[ NK * q + 0], dy);
+                        
+                    if (fabs(wtilde[ NK * q + 2] - wij[ NK * q + 2]) > 1e-6 ||
+                        fabs(wtilde[ NK * q + 1] - wij[ NK * q + 1]) > 1e-6) 
+                    {
+                        //if (j==4) printf("%f %f\n",  wij[ NK * q + 2], wtilde[ NK * q + 2]);
+                        wij[ NK * q + 2] = wtilde[ NK * q + 2];
+                        wij[ NK * q + 1] = wtilde[ NK * q + 1];
+                            
+                        for (int l = 3; l < NK; ++l)
+                        {
+                            wij[ NK * q + l] = 0.0;
+                        }                        
+                    }
 
-                    #endif 
                 }
             }
         }
@@ -1560,9 +1079,9 @@ void limit_weights(struct UpdateStruct update)
 
 int main()
 {
-    const int ni = 100;
-    const int nj = 100;
-    const int fold = 10;
+    const int ni = 64;
+    const int nj = 64;
+    const int fold = 1;
     const real x0 = 0.0;
     const real x1 = 1.0;
     const real y0 = 0.0;
@@ -1582,12 +1101,14 @@ int main()
 
     initial_weights(weights_host, ni, nj, x0, x1, y0, y1);
     update_struct_set_weights(update, weights_host);
-
+    mark_troubled_cells(update);
+    limit_weights(update);
+    
     int iteration = 0;
     real time = 0.0;
     real dt = dx * CFL;
 
-    while (time < 0.1)
+    while (time < 0.228)
     {
         clock_t start = clock();
 
@@ -1595,6 +1116,7 @@ int main()
         {
             compute_delta_weights(update);
             add_delta_weights(update, dt);
+            //mark_troubled_cells(update);
             limit_weights(update);
 
             time += dt;
@@ -1626,12 +1148,13 @@ int main()
 
             for (int q = 0; q < NCONS; ++q)
             {
-                cons[q] = wij[NK * q + 0];                  
+                cons[q] = wij[NK * q + 0]; 
             }
 
-            conserved_to_primitive(cons, prim);
-
-            fprintf(outfile, "%f %f %f %f %f %f %f\n", x, y, prim[0], prim[1], prim[2], prim[3], *tij);
+            //conserved_to_primitive(cons, prim);
+            fprintf(outfile, "%f %f %f %f %f %f %f\n", x, y, cons[0], cons[1], cons[2], cons[3], *tij);
+            //fprintf(outfile, "%f %f %f %f %f %f %f\n", x, y, prim[0], prim[1], prim[2], prim[3], *tij);
+            //fprintf(outfile, "%f %f %f %f %f %f %f\n", x, y, wij[0], wij[1], wij[2], prim[0], *tij);
         }
     }
     fclose(outfile);
@@ -1640,170 +1163,3 @@ int main()
     return 0;
 }
 
-/*
-    real w0[NCONS];
-    real w1[NCONS];
-    real w2[NCONS];
-
-    // slopes of conserved variables
-    real a[NCONS];
-    real b[NCONS];    
-    real c[NCONS];
-    real d[NCONS];    
-    real e[NCONS];
-
-    // slopes of characteristic variables
-    real ca[NCONS];
-    real cb[NCONS];    
-    real cc[NCONS];
-    real cd[NCONS];    
-    real ce[NCONS];
-    
-    //real prim[NCONS];
-
-    for (int q = 0; q < NCONS; ++q)
-    {
-        w0[q] = wij[q * NK];
-        w1[q] = wij[q * NK + 1]; // y slopes
-        w2[q] = wij[q * NK + 2]; // x slopes
-
-        a[q] =  w2[q] / SQRT_THREE;
-        b[q] = (w0[q] - w0l[q]) * BETA;
-        c[q] = (w0r[q] - w0[q]) * BETA;
-
-        d[q] =  w1[q] / SQRT_THREE;
-        e[q] = (w0[q] - w0b[q]) * BETA;
-        f[q] = (w0t[q] - w0[q]) * BETA;
-    }
-    // Use 0th values of the weights, w0, as the conserved variables
-    // to calculate primitive variabbles
-
-    conserved_to_primitive(w0, prim);
-
-    const real cs2 = primitive_to_sound_speed_squared(prim);
-    real cs  = square_root(cs2);
-    const real g1 = ADIABATIC_GAMMA - 1.0;
-
-    real k = 0.5 * (vx * vx + vy * vy);
-    real h = (cs2 / g1) + k;
-    real phi = g1 * k;
-    real beta = 1.0 / (2.0 * cs2);
-
-    // Schaal+ Appendix E
-
-    real lx[4][4] = {
-          {beta*(phi+cs*vx),  -beta*(g1*vx+cs),  -beta*g1*vy,       beta*g1},
-          {(1.0-2.0*beta*phi), 2.0*beta*g1*vx,   2.0*beta*g1*vy,    -2.0*beta*g1},
-          {beta*(phi-cs*vx),  -beta*(g1*vx-cs),  -beta*g1*vy,       beta*g1},
-          {vy,                      0.0,            -1.0,            0.0}
-                    };
-
-    // compute slopes of characterstic variables
-    for (int i = 0, i < NCONS; ++i)
-    {
-        ca[i] = 0.0;
-        cb[i] = 0.0;
-        cc[i] = 0.0;
-        cd[i] = 0.0;
-        ce[i] = 0.0;
-        cf[i] = 0.0;
-
-        for (int j = 0, j < NCONS; ++j)
-        {
-            ca[i] += lx[i][j] * a[j]; // check this
-            cb[i] += lx[i][j] * b[j];
-            cc[i] += lx[i][j] * c[j];
-            cd[i] += lx[i][j] * d[j];
-            ce[i] += lx[i][j] * e[j];
-            cf[i] += lx[i][j] * f[j];
-        }
-    }
-    // Schaal+ Appendix E
-
-    real lx[4][4] = {
-          {beta*(phi+cs*vx),  -beta*(g1*vx+cs),  -beta*g1*vy,       beta*g1},
-          {(1.0-2.0*beta*phi), 2.0*beta*g1*vx,   2.0*beta*g1*vy,    -2.0*beta*g1},
-          {beta*(phi-cs*vx),  -beta*(g1*vx-cs),  -beta*g1*vy,       beta*g1},
-          {vy,                      0.0,            -1.0,            0.0}
-                    };
-
-    real ly[4][4] = {
-          {beta*(phi+cs*vy),  -beta*g1*vx,  -beta*(g1*vy+cs),       beta*g1},
-          {(1.0-2.0*beta*phi), 2.0*beta*g1*vx,   2.0*beta*g1*vy,    -2.0*beta*g1},
-          {beta*(phi-cs*vy),  -beta*g1*vx,  -beta*(g1*vy-cs),       beta*g1},
-          {-vx,                      1.0,            0.0,            0.0}
-                    };
-
-    real rx[4][4] = {
-          { 1.0,        1.0,        1.0,        0.0},
-          {(vx - cs),   vx,     (vx + cs),      0.0},
-          {  vy,        vy,         vy,        -1.0},
-          {(h - cs*vx), k,      (h + cs*vx),    -vy}
-                    };
-
-    real ry[4][4] = {
-          { 1.0,        1.0,        1.0,        0.0},
-          {vx,   vx,     vx,      1.0},
-          {  vy-cs,        vy,         vy+cs,        0.0},
-          {(h - cs*vy), k,      (h + cs*vy),    vx}
-                    };  
-            // compute LeftEigenX and LeftEigenY matrices from wij[ NK * q + 0]
-
-            // compute slopes of characteristic variables:
-            //  c1[q] = LeftEigenX(wij[ NK * q + 1])
-            //  c2[q] = LeftEigenX(wij[ NK * q + 2])
-            //  left[q] = LeftEigenX(wij[NK * q + 0] - wli[NK * q + 0])
-            //  right[q] = LeftEigenX(wri[NK * q + 0] - wij[NK * q + 0])
-            //  bottom[q] = LeftEigenY(wij[NK * q + 0] - wlj[NK * q + 0])
-            //  right[q] = LeftEigenY(wrj[NK * q + 0] - wij[NK * q + 0])
-
-            // use minmodTVB to compute limited characteristic slopes
-            // c1tilde[q] and c2tilde[q] 
-
-            // if c1tilde[q] != c1[q] OR c2tilde[q] != c2[q]
-            // w1tilde[q] = RightEigenX(c1tilde[q])
-            // w2tilde[q] = RightEigenX(c2tilde[q])
-            // set
-            // wij[ NK * q + 1] = w1tilde[q]
-            // wij[ NK * q + 2] = w2tilde[q]
-            // wij[ NK * q + (l>2)] = 0.0
-
-            // slope limiting 
-            for (int q = 0; q < NCONS; ++q)
-            {
-                #if (DG_ORDER == 2)
-
-                // x slopes
-                wij[ NK * q + 2] = minmodTVB(wij[ NK * q + 2], wli[ NK * q + 0], wij[ NK * q + 0], wri[ NK * q + 0], dx);
-
-                // y slopes 
-                wij[ NK * q + 1] = minmodTVB(wij[ NK * q + 1], wlj[ NK * q + 0], wij[ NK * q + 0], wrj[ NK * q + 0], dy);
-
-                #elif (DG_ORDER >= 2)
-
-                // x slopes
-                wtilde[ NK * q + 2] = minmodTVB(wij[ NK * q + 2], wij[ NK * q + 0], wli[ NK * q + 0], wri[ NK * q + 0], dx);
-                // y slopes 
-                wtilde[ NK * q + 1] = minmodTVB(wij[ NK * q + 1], wij[ NK * q + 0], wlj[ NK * q + 0], wrj[ NK * q + 0], dy);
-                
-                if (wtilde[ NK * q + 2] != wij[ NK * q + 2])
-                {
-                    wij[ NK * q + 2] = wtilde[ NK * q + 2];
-                    for (int l = 3; l < NK; ++l)
-                        {
-                            wij[ NK * q + l] = 0.0;
-                        }
-                }
-                if (wtilde[ NK * q + 1] != wij[ NK * q + 1])
-                {
-                    wij[ NK * q + 1] = wtilde[ NK * q + 1];
-                    for (int l = 3; l < NK; ++l)
-                        {
-                            wij[ NK * q + l] = 0.0;
-                        }
-                }
-                #endif
-            }
-        }
-    } 
-    */
