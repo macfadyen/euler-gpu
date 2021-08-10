@@ -1,4 +1,3 @@
-// Schaal shock tube problem 5.2
 #include <stdio.h>
 #include <time.h>
 #include <math.h>
@@ -15,8 +14,8 @@
 #define minabs(a, b, c) min3(fabs(a), fabs(b), fabs(c))
 #define maxabs5(a, b, c, d, e) max2(max2(fabs(a), fabs(b)), max3(fabs(c), fabs(d), fabs(e)))
 
-#define BETA_TVD 0.5
-#define CFL 0.03
+#define BETA 0.5
+#define CFL 0.01
 
 typedef double real;
 #define square_root sqrt
@@ -30,6 +29,7 @@ typedef double real;
 #define NCONS 4  // number of conserved variables
 
 #define SQRT_THREE square_root(3.0)
+#define SQRT_FIVE  square_root(5.0)
 
 struct Cells cell;
 
@@ -136,12 +136,27 @@ struct Cells set_cell(void)
             cell.node[nc].dphidy[2] = p1(xsi[i]) * p0_prime(xsi[j]);
 
             #endif
+
+            #if (DG_ORDER >= 3)
+        
+            // nk = 3
+            cell.node[nc].phi[3]    = p0(xsi[i]) * p2(xsi[j]);
+            cell.node[nc].dphidx[3] = p0_prime(xsi[i]) * p2(xsi[j]);
+            cell.node[nc].dphidy[3] = p0(xsi[i]) * p2_prime(xsi[j]);
+            
+            // nk = 4
+            cell.node[nc].phi[4]    = p1(xsi[i]) * p1(xsi[j]);
+            cell.node[nc].dphidx[4] = p1_prime(xsi[i]) * p1(xsi[j]);
+            cell.node[nc].dphidy[4] = p1(xsi[i]) * p1_prime(xsi[j]); 
+            
+            // nk = 5
+            cell.node[nc].phi[5]    = p2(xsi[i]) * p0(xsi[j]);
+            cell.node[nc].dphidx[5] = p2_prime(xsi[i]) * p0(xsi[j]);
+            cell.node[nc].dphidy[5] = p2(xsi[i]) * p0_prime(xsi[j]);                       
+        
+            #endif
             
             cell.node[nc].gw = gw[i] * gw[j];   // 2D Gaussian weight
-
-            //printf("%d %d %d %f %f %f\n",i,j,nc,cell.node[nc].phi[0], cell.node[nc].phi[1],cell.node[nc].phi[2]);
-            //printf("%d %d %d %f %f %f\n",i,j,nc,cell.node[nc].dphidx[0], cell.node[nc].dphidx[1],cell.node[nc].dphidx[2]);
-            //printf("%d %d %d %f %f %f\n\n",i,j,nc,cell.node[nc].dphidy[0], cell.node[nc].dphidy[1],cell.node[nc].dphidy[2]);
 
             nc = nc + 1;
         }
@@ -332,14 +347,18 @@ struct Cells set_cell(void)
 
 real minmod(real a, real b, real c)
 {
-    return 0.25 * fabs(sign(a) + sign(b)) * (sign(a) + sign(c)) * minabs(a, b, c);
+        real x1 = fabs(sign(a) + sign(b)) * (sign(a) + sign(c));
+        real x2 = minabs(a, b, c);
+        real x = 0.25 * x1 * x2;
+
+        return x;
 }
 
 real minmodTVB(real w1, real w0l, real w0, real w0r, real dl)
 {
     real a = w1 * SQRT_THREE;
-    real b = (w0 - w0l) * BETA_TVD;
-    real c = (w0r - w0) * BETA_TVD;
+    real b = (w0 - w0l) * BETA;
+    real c = (w0r - w0) * BETA;
 
     const real M = 0.0; //Cockburn & Shu, JCP 141, 199 (1998) eq. 3.7 suggest M~50.0
 
@@ -569,11 +588,13 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
             // loop over cell quadrature points
             for (int qp = 0; qp < NCELL; ++qp){
 
+                // global coordinates of the quadrature points
                 real xq = xl + (cell.node[qp].xsi_x / 2.0) * dx;
                 real yq = yl + (cell.node[qp].xsi_y / 2.0) * dy;
 
                 // real r2 = power(xq - xmid, 2) + power(yq - ymid, 2);
 
+                // Schaal shock tube problem 5.2, run to t=0.228
                 if (xq < xmid)     
                 {
                     rho = 1.0;
@@ -921,11 +942,6 @@ void mark_troubled_cells(struct UpdateStruct update)
     const real dy = (update.y1 - update.y0) / update.nj;
     const real dvol = 4; // in xsi coordinate [-1,1] x [-1,1]
 
-    const real ck = 0.6;       //k=1; see Fu & Shu Sec. 3
-    //const real ck = 0.03;        //k=1; see Fu & Shu Sec. 3
-    //const real ck = 0.03 * 2 ; //k=2; see Fu & Shu Sec. 3
-    //const real ck = 0.03 * 4 ; //k=3; see Fu & Shu Sec. 3
-
     for (int i = 0; i < ni; ++i)
     {
         for (int j = 0; j < nj; ++j)
@@ -960,47 +976,164 @@ void mark_troubled_cells(struct UpdateStruct update)
 
             // Troubled Cell Indicator G. Fu & C.-W. Shu (JCP, 347, 305 (2017))
 
-            // Try Second order first
-
             // eq. 2.3 compute max bar p and double bar p for rho and E
+
+            // q=0 for rho
+
+            real maxpj = maxabs5(wij[0 * NK + 0], wli[0 * NK + 0], wri[0 * NK + 0], wlj[0 * NK + 0], wrj[0 * NK + 0]);
+
+            // first order
+            real a = 4.0 * wli[0 * NK + 0];
+            real b = 4.0 * wri[0 * NK + 0];
+            real c = 4.0 * wlj[0 * NK + 0];
+            real d = 4.0 * wrj[0 * NK + 0];
+
+            #if (DG_ORDER >= 2)
+
+            a += 8.0 * SQRT_THREE * wli[0 * NK + 2];
+            b -= 8.0 * SQRT_THREE * wri[0 * NK + 2];
+            c += 8.0 * SQRT_THREE * wlj[0 * NK + 1];
+            d -= 8.0 * SQRT_THREE * wrj[0 * NK + 1];
             
-            // integral of p over it's own cell
+            #endif
 
-            // l=0 for rho
+            #if (DG_ORDER >= 3)
 
-            real maxpj = maxabs5(wij[0], wli[0], wri[0], wlj[0], wrj[0]);
+            a += 24.0 * SQRT_FIVE * wli[0 * NK + 5];
+            b += 24.0 * SQRT_FIVE * wri[0 * NK + 5];
+            c += 24.0 * SQRT_FIVE * wlj[0 * NK + 5];
+            d += 24.0 * SQRT_FIVE * wrj[0 * NK + 5];
+ 
+            #endif
 
-            real pbb_li = fabs(wij[0] - (4.0 * wli[0] + 8.0 * SQRT_THREE * wli[2]) / dvol);
-            real pbb_ri = fabs(wij[0] - (4.0 * wri[0] - 8.0 * SQRT_THREE * wri[2]) / dvol);
-            real pbb_lj = fabs(wij[0] - (4.0 * wlj[0] + 8.0 * SQRT_THREE * wlj[1]) / dvol);
-            real pbb_rj = fabs(wij[0] - (4.0 * wrj[0] - 8.0 * SQRT_THREE * wrj[1]) / dvol);
+            real pbb_li = fabs(wij[0 * NK + 0] - a / dvol);
+            real pbb_ri = fabs(wij[0 * NK + 0] - b / dvol);
+            real pbb_lj = fabs(wij[0 * NK + 0] - c / dvol);
+            real pbb_rj = fabs(wij[0 * NK + 0] - d / dvol);
 
             real trouble_rho = (pbb_li + pbb_ri + pbb_lj + pbb_rj) / maxpj;
 
-            if (j==4)
-            {
-            //printf("%d %d %f %f %f %f\n",i,j,(4.0 * wli[0] + 8.0 * wli[2]),wij[0],wli[0],wli[2]);
-            //printf("%d %d %f %f %f %f %f %f\n\n",i,j,trouble_rho,pbb_li, pbb_ri, pbb_lj, pbb_rj, maxpj);
-            }
-            // l=3 for energy
+            // q=3 for energy
 
-            /**/ maxpj = maxabs5(wij[3*NK+0], wli[3*NK+0], wri[3*NK+0], wlj[3*NK+0], wrj[3*NK+0]);
+            maxpj = maxabs5(wij[3 * NK + 0], wli[3 * NK + 0], wri[3 * NK + 0], wlj[3 * NK + 0], wrj[3 * NK + 0]);
 
-            /**/ pbb_li = fabs(wij[3*NK+0] - (4.0 * wli[3*NK+0] + 8.0 * SQRT_THREE * wli[3*NK+2]) / dvol);
-            /**/ pbb_ri = fabs(wij[3*NK+0] - (4.0 * wri[3*NK+0] - 8.0 * SQRT_THREE * wri[3*NK+2]) / dvol);
-            /**/ pbb_lj = fabs(wij[3*NK+0] - (4.0 * wlj[3*NK+0] + 8.0 * SQRT_THREE * wlj[3*NK+1]) / dvol);
-            /**/ pbb_rj = fabs(wij[3*NK+0] - (4.0 * wrj[3*NK+0] - 8.0 * SQRT_THREE * wrj[3*NK+1]) / dvol);
+            // first order
+            a = 4.0 * wli[3 * NK + 0];
+            b = 4.0 * wri[3 * NK + 0];
+            c = 4.0 * wlj[3 * NK + 0];
+            d = 4.0 * wrj[3 * NK + 0];
+  
+            #if (DG_ORDER >= 2)
 
+            a += 8.0 * SQRT_THREE * wli[3 * NK + 2];
+            b -= 8.0 * SQRT_THREE * wri[3 * NK + 2];
+            c += 8.0 * SQRT_THREE * wlj[3 * NK + 1];
+            d -= 8.0 * SQRT_THREE * wrj[3 * NK + 1];
+             
+            #endif
+
+            #if (DG_ORDER >= 3)
+
+            a += 24.0 * SQRT_FIVE * wli[3 * NK + 5];
+            b += 24.0 * SQRT_FIVE * wri[3 * NK + 5];
+            c += 24.0 * SQRT_FIVE * wlj[3 * NK + 5];
+            d += 24.0 * SQRT_FIVE * wrj[3 * NK + 5];
+
+            #endif
+
+            pbb_li = fabs(wij[3 * NK + 0] - a / dvol);
+            pbb_ri = fabs(wij[3 * NK + 0] - b / dvol);
+            pbb_lj = fabs(wij[3 * NK + 0] - c / dvol);
+            pbb_rj = fabs(wij[3 * NK + 0] - d / dvol);
+ 
             real trouble_e = (pbb_li + pbb_ri + pbb_lj + pbb_rj) / maxpj;
-
-            //printf("trouble: %d %d %f %f\n",i,j,trouble_rho,trouble_e);
-
+            //if (j==4) printf("%d %f %f\n",i, trouble_rho,trouble_e);
             *tij = max2( trouble_rho, trouble_e );
         }
     }
 }
 
-void limit_weights(struct UpdateStruct update)
+void limit_conserved_weights(struct UpdateStruct update)
+{
+    real cons[NCONS];
+    real prim[NCONS];
+    
+    int ni = update.ni;
+    int nj = update.nj;
+
+    const real dx = (update.x1 - update.x0) / update.ni;
+    const real dy = (update.y1 - update.y0) / update.nj;
+
+    real wtilde[NK * NCONS];
+
+    //const real ck = 0.6;       
+    //const real ck = 0.03;        //k=1; see Fu & Shu Sec. 3
+    const real ck = 0.03 * 2; //k=2; see Fu & Shu Sec. 3
+    //const real ck = 0.03 * 4 ; //k=3; see Fu & Shu Sec. 3
+    
+    for (int i = 0; i < ni; ++i)
+    {
+        for (int j = 0; j < nj; ++j)
+        {
+            int il = i - 1;
+            int ir = i + 1;
+            int jl = j - 1;
+            int jr = j + 1;
+                        
+            // Outflow BC
+            if (il == -1)
+                il += 1;
+
+            if (ir == ni)
+                ir -= 1;
+
+            if (jl == -1)
+                jl += 1;
+
+            if (jr == nj)
+                jr -= 1;
+
+            /* */ real *wij = &update.weights[NCONS * NK * (i  * nj + j )];
+
+            const real *wli = &update.weights[NCONS * NK * (il * nj + j )];
+            const real *wri = &update.weights[NCONS * NK * (ir * nj + j )];
+            const real *wlj = &update.weights[NCONS * NK * (i  * nj + jl)];
+            const real *wrj = &update.weights[NCONS * NK * (i  * nj + jr)];
+
+            const real  *tij = &update.trouble[i * nj + j];
+
+            if ( *tij > ck )
+            {
+                for (int q = 0; q < NCONS; ++q)
+                {
+                    // real minmodTVB(real w1, real w0l, real w0, real w0r, real dl)
+                    
+                    // x slopes
+                    wtilde[ NK * q + 2] = minmodTVB(wij[ NK * q + 2], wli[ NK * q + 0], wij[ NK * q + 0], wri[ NK * q + 0], dx);
+                    
+                    // y slopes 
+                    wtilde[ NK * q + 1] = minmodTVB(wij[ NK * q + 1], wlj[ NK * q + 0], wij[ NK * q + 0], wrj[ NK * q + 0], dy);
+                        
+                    if (fabs(wtilde[ NK * q + 2] - wij[ NK * q + 2]) > 1e-6 ||
+                        fabs(wtilde[ NK * q + 1] - wij[ NK * q + 1]) > 1e-6) 
+                    {
+                        //if (j==4) printf("%f %f\n",  wij[ NK * q + 2], wtilde[ NK * q + 2]);
+                        wij[ NK * q + 2] = wtilde[ NK * q + 2];
+                        wij[ NK * q + 1] = wtilde[ NK * q + 1];
+                            
+                        for (int l = 3; l < NK; ++l)
+                        {
+                            wij[ NK * q + l] = 0.0;
+                        }                        
+                    }
+                }
+            }
+        }
+    }
+}
+
+/*
+void limit_characteristic_weights(struct UpdateStruct update)
 {
     real cons[NCONS];
     real prim[NCONS];
@@ -1035,7 +1168,7 @@ void limit_weights(struct UpdateStruct update)
             if (jr == nj)
                 jr -= 1;
 
-            /* */ real *wij = &update.weights[NCONS * NK * (i  * nj + j )];
+                  real *wij = &update.weights[NCONS * NK * (i  * nj + j )];
 
             const real *wli = &update.weights[NCONS * NK * (il * nj + j )];
             const real *wri = &update.weights[NCONS * NK * (ir * nj + j )];
@@ -1044,26 +1177,122 @@ void limit_weights(struct UpdateStruct update)
 
             const real  *tij = &update.trouble[i * nj + j];
 
-            //if (j==4) printf("%f\n",*tij);
-
             if ( *tij > 0.03 )
             {
+                real w0[NCONS];
+                real w1[NCONS];
+                real w2[NCONS];
+
+                // slopes of conserved variables
+                real a[NCONS];
+                real b[NCONS];    
+                real c[NCONS];
+                real d[NCONS];    
+
+                // slopes of characteristic variables
+                real ca[NCONS];
+                real cb[NCONS];    
+                real cc[NCONS];
+                real cd[NCONS];    
+
+                real w2t[NCONS];
+                real w1t[NCONS];
+
+                real prim[NCONS];
+
                 for (int q = 0; q < NCONS; ++q)
                 {
-                    // real minmodTVB(real w1, real w0l, real w0, real w0r, real dl)
-                    
-                    // x slopes
-                    wtilde[ NK * q + 2] = minmodTVB(wij[ NK * q + 2], wli[ NK * q + 0], wij[ NK * q + 0], wri[ NK * q + 0], dx);
-                    
-                    // y slopes 
-                    wtilde[ NK * q + 1] = minmodTVB(wij[ NK * q + 1], wlj[ NK * q + 0], wij[ NK * q + 0], wrj[ NK * q + 0], dy);
-                        
-                    if (fabs(wtilde[ NK * q + 2] - wij[ NK * q + 2]) > 1e-6 ||
-                        fabs(wtilde[ NK * q + 1] - wij[ NK * q + 1]) > 1e-6) 
+                    w0[q] = wij[q * NK];
+
+                    w1[q] = wij[q * NK + 1]; // y slopes
+                    w2[q] = wij[q * NK + 2]; // x slopes
+
+                    a[q] = (w0[q] - w0l[q]);
+                    b[q] = (w0r[q] - w0[q]);
+
+                    c[q] = (w0[q] - w0b[q]);
+                    d[q] = (w0t[q] - w0[q]);
+                }
+
+                conserved_to_primitive(w0, prim);
+
+                const real cs2 = primitive_to_sound_speed_squared(prim);
+                real cs  = square_root(cs2);
+                const real g1 = ADIABATIC_GAMMA - 1.0;
+                real vx = prim[1];
+                real vy = prim[2];
+                real k = 0.5 * (vx * vx + vy * vy);
+                real h = (cs2 / g1) + k;
+                real phi = g1 * k;
+                real beta = 1.0 / (2.0 * cs2);
+
+                real lx[4][4] = {
+                      {beta*(phi+cs*vx),  -beta*(g1*vx+cs),  -beta*g1*vy,       beta*g1},
+                      {(1.0-2.0*beta*phi), 2.0*beta*g1*vx,   2.0*beta*g1*vy,    -2.0*beta*g1},
+                      {beta*(phi-cs*vx),  -beta*(g1*vx-cs),  -beta*g1*vy,       beta*g1},
+                      {vy,                      0.0,            -1.0,            0.0}
+                          
+                real ly[4][4] = {
+                      {beta*(phi+cs*vy),  -beta*g1*vx,  -beta*(g1*vy+cs),       beta*g1},
+                      {(1.0-2.0*beta*phi), 2.0*beta*g1*vx,   2.0*beta*g1*vy,    -2.0*beta*g1},
+                      {beta*(phi-cs*vy),  -beta*g1*vx,  -beta*(g1*vy-cs),       beta*g1},
+                      {-vx,                      1.0,            0.0,            0.0}
+                          
+                real rx[4][4] = {
+                      { 1.0,        1.0,        1.0,        0.0},
+                      {(vx - cs),   vx,     (vx + cs),      0.0},
+                      {  vy,        vy,         vy,        -1.0},
+                      {(h - cs*vx), k,      (h + cs*vx),    -vy}
+                          
+                real ry[4][4] = {
+                      { 1.0,        1.0,        1.0,        0.0},
+                      {vx,   vx,     vx,      1.0},
+                      {  vy-cs,        vy,         vy+cs,        0.0},
+                      {(h - cs*vy), k,      (h + cs*vy),    vx}
+                                };
+
+                for (int qi = 0, qi < NCONS; ++qi)
+                {
+                    c2[qi] = 0.0;
+                    c1[qi] = 0.0;
+                    cc[qi] = 0.0;
+                    cd[qi] = 0.0;
+                    ce[qi] = 0.0;
+                    cf[qi] = 0.0;
+
+                    for (int qj = 0, qj < NCONS; ++qj)
                     {
-                        //if (j==4) printf("%f %f\n",  wij[ NK * q + 2], wtilde[ NK * q + 2]);
-                        wij[ NK * q + 2] = wtilde[ NK * q + 2];
-                        wij[ NK * q + 1] = wtilde[ NK * q + 1];
+                        c2[qi] += ly[qi][qj] * w2[qj]; // check this
+                        c1[qi] += lx[qi][qj] * w1[qj];
+                        cc[qi] += lx[qi][qj] * (w0[qj] - w0l[qj]);
+                        cd[qi] += lx[qi][qj] * (w0r[q] - w0[q]);
+                        ce[qi] += ly[qi][qj] * (w0[q] - w0b[q]);
+                        cf[qi] += ly[qi][qj] * (w0t[q] - w0[q]);
+                    }
+                }
+
+                for (int q = 0; q < NCONS; ++q)
+                {
+                    c2t[q] = minmod(SQRT_THREE * c2[q], BETA * cc[q], BETA * cd[q]) / SQRT_THREE;
+                    c1t[q] = minmod(SQRT_THREE * c1[q], BETA * ce[q], BETA * cf[q]) / SQRT_THREE;
+
+                    if ( fabs(c2t[q] - c2[q]) > 1e-6 ||
+                         fabs(c1t[q] - c1[q]) > 1e-6) 
+                    {
+                    
+                    for (int qi = 0, qi < NCONS; ++qi)
+                    {
+                        w2t[qi] = 0.0;
+                        w1t[qi] = 0.0;
+
+                        for (int qj = 0, qj < NCONS; ++qj)
+                        {
+                            w2t[qi] += ry[qi][qj] * c2t[qj]; // check this
+                            w1t[qi] += rx[qi][qj] * c1t[qj];
+                        }
+                    }
+                        wij[ NK * q + 2] = w2t[q];
+                        wij[ NK * q + 1] = w1t[q];
                             
                         for (int l = 3; l < NK; ++l)
                         {
@@ -1076,6 +1305,7 @@ void limit_weights(struct UpdateStruct update)
         }
     }
 }
+*/
 
 int main()
 {
@@ -1102,7 +1332,7 @@ int main()
     initial_weights(weights_host, ni, nj, x0, x1, y0, y1);
     update_struct_set_weights(update, weights_host);
     mark_troubled_cells(update);
-    limit_weights(update);
+    limit_conserved_weights(update);
     
     int iteration = 0;
     real time = 0.0;
@@ -1116,8 +1346,8 @@ int main()
         {
             compute_delta_weights(update);
             add_delta_weights(update, dt);
-            //mark_troubled_cells(update);
-            limit_weights(update);
+            mark_troubled_cells(update);
+            limit_conserved_weights(update);
 
             time += dt;
             iteration += 1;
@@ -1126,7 +1356,7 @@ int main()
 
         real seconds = ((real) (end - start)) / CLOCKS_PER_SEC;
         real mcps = (ni * nj / 1e6) / seconds * fold;
-        printf("[%d] t=%.3e Mcps=%.2f Mnps=%.2f\n", iteration, time, mcps, NCELL * mcps);
+        printf("[%d] t=%.3e Mcps=%.2f Mpps=%.2f Mnps=%.2f\n", iteration, time, mcps, NK * mcps, NCELL * mcps);
     }
 
     update_struct_get_weights(update, weights_host);
