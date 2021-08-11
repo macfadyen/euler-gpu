@@ -1132,20 +1132,14 @@ void limit_conserved_weights(struct UpdateStruct update)
     }
 }
 
-/*
 void limit_characteristic_weights(struct UpdateStruct update)
-{
-    real cons[NCONS];
-    real prim[NCONS];
-    
+{    
     int ni = update.ni;
     int nj = update.nj;
 
     const real dx = (update.x1 - update.x0) / update.ni;
     const real dy = (update.y1 - update.y0) / update.nj;
 
-    real wtilde[NK * NCONS];
-    
     for (int i = 0; i < ni; ++i)
     {
         for (int j = 0; j < nj; ++j)
@@ -1177,43 +1171,53 @@ void limit_characteristic_weights(struct UpdateStruct update)
 
             const real  *tij = &update.trouble[i * nj + j];
 
+            real wtilde[NK * NCONS];
+
+            real cons[NCONS];
+            real prim[NCONS];
+
+            real w0[NCONS];
+            real w0l[NCONS];
+            real w0r[NCONS];
+            real w0b[NCONS];
+            real w0t[NCONS];
+
+            // slopes of conserved variables
+            real w1[NCONS]; // y slopes
+            real w2[NCONS]; // x slopes
+
+            // slopes of characteristic variables
+            real c1[NCONS]; // y slopes
+            real c2[NCONS]; // x slopes
+
+            // limited "tilde" slopes
+            real w1t[NCONS];
+            real w2t[NCONS]; 
+            real c1t[NCONS];
+            real c2t[NCONS]; 
+
+            // characteristic version of difference of mean values (l=0) to neighbor zones
+            real cl[NCONS]; // left
+            real cr[NCONS]; // right   
+            real cb[NCONS]; // bottom
+            real ct[NCONS]; // top 
+
             if ( *tij > 0.03 )
             {
-                real w0[NCONS];
-                real w1[NCONS];
-                real w2[NCONS];
-
-                // slopes of conserved variables
-                real a[NCONS];
-                real b[NCONS];    
-                real c[NCONS];
-                real d[NCONS];    
-
-                // slopes of characteristic variables
-                real ca[NCONS];
-                real cb[NCONS];    
-                real cc[NCONS];
-                real cd[NCONS];    
-
-                real w2t[NCONS];
-                real w1t[NCONS];
-
-                real prim[NCONS];
-
                 for (int q = 0; q < NCONS; ++q)
                 {
-                    w0[q] = wij[q * NK];
+                    // mean values (l=0) of conserved variables in the cell and nearest neighbor cells
+                    w0[q]  = wij[q * NK + 0];
+                    w0l[q] = wli[q * NK + 0]; // left 
+                    w0r[q] = wri[q * NK + 0]; // right
+                    w0b[q] = wlj[q * NK + 0]; // bottom
+                    w0t[q] = wrj[q * NK + 0]; // top
 
-                    w1[q] = wij[q * NK + 1]; // y slopes
-                    w2[q] = wij[q * NK + 2]; // x slopes
-
-                    a[q] = (w0[q] - w0l[q]);
-                    b[q] = (w0r[q] - w0[q]);
-
-                    c[q] = (w0[q] - w0b[q]);
-                    d[q] = (w0t[q] - w0[q]);
+                    // slopes (l=1, l=2) of conserved variables in the cell
+                    w1[q] =  wij[q * NK + 1]; // y slopes
+                    w2[q] =  wij[q * NK + 2]; // x slopes
                 }
-
+            
                 conserved_to_primitive(w0, prim);
 
                 const real cs2 = primitive_to_sound_speed_squared(prim);
@@ -1226,86 +1230,90 @@ void limit_characteristic_weights(struct UpdateStruct update)
                 real phi = g1 * k;
                 real beta = 1.0 / (2.0 * cs2);
 
-                real lx[4][4] = {
+                real lx[4][4]= {
                       {beta*(phi+cs*vx),  -beta*(g1*vx+cs),  -beta*g1*vy,       beta*g1},
                       {(1.0-2.0*beta*phi), 2.0*beta*g1*vx,   2.0*beta*g1*vy,    -2.0*beta*g1},
                       {beta*(phi-cs*vx),  -beta*(g1*vx-cs),  -beta*g1*vy,       beta*g1},
-                      {vy,                      0.0,            -1.0,            0.0}
-                          
+                      {vy,                      0.0,            -1.0,            0.0}};
+
                 real ly[4][4] = {
                       {beta*(phi+cs*vy),  -beta*g1*vx,  -beta*(g1*vy+cs),       beta*g1},
                       {(1.0-2.0*beta*phi), 2.0*beta*g1*vx,   2.0*beta*g1*vy,    -2.0*beta*g1},
                       {beta*(phi-cs*vy),  -beta*g1*vx,  -beta*(g1*vy-cs),       beta*g1},
-                      {-vx,                      1.0,            0.0,            0.0}
+                      {-vx,                      1.0,            0.0,            0.0}};
                           
                 real rx[4][4] = {
                       { 1.0,        1.0,        1.0,        0.0},
                       {(vx - cs),   vx,     (vx + cs),      0.0},
                       {  vy,        vy,         vy,        -1.0},
-                      {(h - cs*vx), k,      (h + cs*vx),    -vy}
+                      {(h - cs*vx), k,      (h + cs*vx),    -vy}};
                           
                 real ry[4][4] = {
                       { 1.0,        1.0,        1.0,        0.0},
                       {vx,   vx,     vx,      1.0},
                       {  vy-cs,        vy,         vy+cs,        0.0},
-                      {(h - cs*vy), k,      (h + cs*vy),    vx}
-                                };
+                      {(h - cs*vy), k,      (h + cs*vy),    vx}};
 
-                for (int qi = 0, qi < NCONS; ++qi)
+                // convert to characteristic variables
+                for (int qi = 0; qi < NCONS; ++qi)
                 {
                     c2[qi] = 0.0;
                     c1[qi] = 0.0;
-                    cc[qi] = 0.0;
-                    cd[qi] = 0.0;
-                    ce[qi] = 0.0;
-                    cf[qi] = 0.0;
+                    cl[qi] = 0.0;
+                    cr[qi] = 0.0;
+                    cb[qi] = 0.0;
+                    ct[qi] = 0.0;
 
-                    for (int qj = 0, qj < NCONS; ++qj)
+                    for (int qj = 0; qj < NCONS; ++qj)
                     {
-                        c2[qi] += ly[qi][qj] * w2[qj]; // check this
-                        c1[qi] += lx[qi][qj] * w1[qj];
-                        cc[qi] += lx[qi][qj] * (w0[qj] - w0l[qj]);
-                        cd[qi] += lx[qi][qj] * (w0r[q] - w0[q]);
-                        ce[qi] += ly[qi][qj] * (w0[q] - w0b[q]);
-                        cf[qi] += ly[qi][qj] * (w0t[q] - w0[q]);
+                        c2[qi] += lx[qi][qj] *   w2[qj]; // x slopes
+                        cl[qi] += lx[qi][qj] *  (w0[qj]  - w0l[qj]); // left difference
+                        cr[qi] += lx[qi][qj] * (w0r[qj]  -  w0[qj]); // right difference
+
+                        c1[qi] += ly[qi][qj] *   w1[qj]; // y slopes
+                        cb[qi] += ly[qi][qj] *  (w0[qj]  - w0b[qj]); // bottom difference
+                        ct[qi] += ly[qi][qj] * (w0t[qj]  -  w0[qj]); // top difference
                     }
                 }
 
+                // limit characteristic slopes (for l=1, l=2)
                 for (int q = 0; q < NCONS; ++q)
                 {
-                    c2t[q] = minmod(SQRT_THREE * c2[q], BETA * cc[q], BETA * cd[q]) / SQRT_THREE;
-                    c1t[q] = minmod(SQRT_THREE * c1[q], BETA * ce[q], BETA * cf[q]) / SQRT_THREE;
+                    c1t[q] = minmod(SQRT_THREE * c1[q], BETA * cb[q], BETA * ct[q]) / SQRT_THREE;
+                    c2t[q] = minmod(SQRT_THREE * c2[q], BETA * cl[q], BETA * cr[q]) / SQRT_THREE;
+                }
+                
+                // compute limited conservative slopes (for l=1, l=2)
+                for (int qi = 0; qi < NCONS; ++qi)
+                {
+                    w2t[qi] = 0.0;
+                    w1t[qi] = 0.0;
 
-                    if ( fabs(c2t[q] - c2[q]) > 1e-6 ||
-                         fabs(c1t[q] - c1[q]) > 1e-6) 
+                    for (int qj = 0; qj < NCONS; ++qj)
                     {
-                    
-                    for (int qi = 0, qi < NCONS; ++qi)
-                    {
-                        w2t[qi] = 0.0;
-                        w1t[qi] = 0.0;
-
-                        for (int qj = 0, qj < NCONS; ++qj)
-                        {
-                            w2t[qi] += ry[qi][qj] * c2t[qj]; // check this
-                            w1t[qi] += rx[qi][qj] * c1t[qj];
-                        }
+                        w1t[qi] += ry[qi][qj] * c1t[qj]; // y slopes
+                        w2t[qi] += rx[qi][qj] * c2t[qj]; // x slopes
                     }
-                        wij[ NK * q + 2] = w2t[q];
-                        wij[ NK * q + 1] = w1t[q];
+                }
+                                
+                for (int q = 0; q < NCONS; ++q)
+                {
+                    if ( (fabs(c2t[q] - c2[q]) > 1e-6) || (fabs(c1t[q] - c1[q]) > 1e-6) )
+                    { 
+                        wij[NK * q + 2] = w2t[q];
+                        wij[NK * q + 1] = w1t[q];
                             
                         for (int l = 3; l < NK; ++l)
                         {
-                            wij[ NK * q + l] = 0.0;
+                            wij[NK * q + l] = 0.0;
                         }                        
                     }
-
                 }
             }
         }
     }
 }
-*/
+
 
 int main()
 {
@@ -1332,22 +1340,23 @@ int main()
     initial_weights(weights_host, ni, nj, x0, x1, y0, y1);
     update_struct_set_weights(update, weights_host);
     mark_troubled_cells(update);
-    limit_conserved_weights(update);
-    
+
+
     int iteration = 0;
     real time = 0.0;
     real dt = dx * CFL;
 
-    while (time < 0.228)
+    while (time < 0.001)
     {
         clock_t start = clock();
 
         for (int i = 0; i < fold; ++i)
         {
+            //limit_conserved_weights(update);
+            limit_characteristic_weights(update);
             compute_delta_weights(update);
             add_delta_weights(update, dt);
             mark_troubled_cells(update);
-            limit_conserved_weights(update);
 
             time += dt;
             iteration += 1;
