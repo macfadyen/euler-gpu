@@ -1001,8 +1001,8 @@ void mark_troubled_cells(struct UpdateStruct update)
 
             a += 24.0 * SQRT_FIVE * wli[0 * NK + 5];
             b += 24.0 * SQRT_FIVE * wri[0 * NK + 5];
-            c += 24.0 * SQRT_FIVE * wlj[0 * NK + 5];
-            d += 24.0 * SQRT_FIVE * wrj[0 * NK + 5];
+            c += 24.0 * SQRT_FIVE * wlj[0 * NK + 3];
+            d += 24.0 * SQRT_FIVE * wrj[0 * NK + 3];
  
             #endif
 
@@ -1036,8 +1036,8 @@ void mark_troubled_cells(struct UpdateStruct update)
 
             a += 24.0 * SQRT_FIVE * wli[3 * NK + 5];
             b += 24.0 * SQRT_FIVE * wri[3 * NK + 5];
-            c += 24.0 * SQRT_FIVE * wlj[3 * NK + 5];
-            d += 24.0 * SQRT_FIVE * wrj[3 * NK + 5];
+            c += 24.0 * SQRT_FIVE * wlj[3 * NK + 3];
+            d += 24.0 * SQRT_FIVE * wrj[3 * NK + 3];
 
             #endif
 
@@ -1346,14 +1346,14 @@ int main()
     real time = 0.0;
     real dt = dx * CFL;
 
-    while (time < 0.001)
+    while (time < 0.228)
     {
         clock_t start = clock();
 
         for (int i = 0; i < fold; ++i)
         {
-            //limit_conserved_weights(update);
-            limit_characteristic_weights(update);
+            limit_conserved_weights(update);
+            //limit_characteristic_weights(update);
             compute_delta_weights(update);
             add_delta_weights(update, dt);
             mark_troubled_cells(update);
