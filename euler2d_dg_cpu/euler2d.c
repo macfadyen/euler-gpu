@@ -349,7 +349,7 @@ real minmod(real a, real b, real c)
 {
         real x1 = fabs(sign(a) + sign(b)) * (sign(a) + sign(c));
         real x2 = minabs(a, b, c);
-        real x = 0.25 * x1 * x2;
+        real x  = 0.25 * x1 * x2;
 
         return x;
 }
@@ -361,8 +361,9 @@ real minmodTVB(real w1, real w0l, real w0, real w0r, real dl)
     real c = (w0r - w0) * BETA;
 
     const real M = 0.0; //Cockburn & Shu, JCP 141, 199 (1998) eq. 3.7 suggest M~50.0
-
+    //const real Mtilde = 0.5; //Schaal+
     if (fabs(a) <= M * dl * dl)
+    //if (fabs(a) <= Mtilde * dl)
     {        
         return w1;
     }
@@ -565,8 +566,8 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
         for (int j = 0; j < nj; ++j)
         {
 
-            real xl = x0 + i * dx; // left side of cell
-            real yl = y0 + j * dy; // bottom side of cell
+            real x = x0 + (i + 0.5) * dx;
+            real y = y0 + (j + 0.5) * dy;
 
             real xmid = 0.5 * (x0 + x1);
             real ymid = 0.5 * (y0 + y1);
@@ -589,8 +590,8 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
             for (int qp = 0; qp < NCELL; ++qp){
 
                 // global coordinates of the quadrature points
-                real xq = xl + (cell.node[qp].xsi_x / 2.0) * dx;
-                real yq = yl + (cell.node[qp].xsi_y / 2.0) * dy;
+                real xq = x + (cell.node[qp].xsi_x / 2.0) * dx;
+                real yq = y + (cell.node[qp].xsi_y / 2.0) * dy;
 
                 // real r2 = power(xq - xmid, 2) + power(yq - ymid, 2);
 
@@ -605,7 +606,6 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
                     rho = 0.125;
                     pressure = 0.1;
                 }
-
                 vx = 0.0;
                 vy = 0.0;
 
@@ -624,9 +624,19 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
                     }
                 }
             }
+
+            /*for (int q = 0; q < NCONS; ++q)
+            {
+                for (int l = 0; l < NK; ++l)
+                {
+                    if(j==4) printf("%d %d %d %f\n",i,q,l,wij[q * NK + l]);
+                }
+            }*/
+
         }
     }
 }
+
 
 struct UpdateStruct
 {
@@ -1047,7 +1057,7 @@ void mark_troubled_cells(struct UpdateStruct update)
             pbb_rj = fabs(wij[3 * NK + 0] - d / dvol);
  
             real trouble_e = (pbb_li + pbb_ri + pbb_lj + pbb_rj) / maxpj;
-            //if (j==4) printf("%d %f %f\n",i, trouble_rho,trouble_e);
+
             *tij = max2( trouble_rho, trouble_e );
         }
     }
@@ -1068,7 +1078,7 @@ void limit_conserved_weights(struct UpdateStruct update)
 
     //const real ck = 0.6;       
     //const real ck = 0.03;        //k=1; see Fu & Shu Sec. 3
-    const real ck = 0.03 * 2; //k=2; see Fu & Shu Sec. 3
+    const real ck = 0.03; //k=2; see Fu & Shu Sec. 3
     //const real ck = 0.03 * 4 ; //k=3; see Fu & Shu Sec. 3
     
     for (int i = 0; i < ni; ++i)
@@ -1102,7 +1112,7 @@ void limit_conserved_weights(struct UpdateStruct update)
 
             const real  *tij = &update.trouble[i * nj + j];
 
-            if ( *tij > ck )
+            if ( *tij > 0.4 )
             {
                 for (int q = 0; q < NCONS; ++q)
                 {
@@ -1113,18 +1123,23 @@ void limit_conserved_weights(struct UpdateStruct update)
                     
                     // y slopes 
                     wtilde[ NK * q + 1] = minmodTVB(wij[ NK * q + 1], wlj[ NK * q + 0], wij[ NK * q + 0], wrj[ NK * q + 0], dy);
-                        
-                    if (fabs(wtilde[ NK * q + 2] - wij[ NK * q + 2]) > 1e-6 ||
-                        fabs(wtilde[ NK * q + 1] - wij[ NK * q + 1]) > 1e-6) 
+
+                    
+                    if ( (wtilde[ NK * q + 2] != wij[ NK * q + 2]) ||
+                         (wtilde[ NK * q + 1] != wij[ NK * q + 1]) ) 
                     {
-                        //if (j==4) printf("%f %f\n",  wij[ NK * q + 2], wtilde[ NK * q + 2]);
+                        //if (j==0 && q==0) printf("cons 1: %d %f %f %f\n\n", i, wij[ NK * q + 2], wtilde[ NK * q + 2], wij[ NK * q + 5]);                        
+
+
                         wij[ NK * q + 2] = wtilde[ NK * q + 2];
                         wij[ NK * q + 1] = wtilde[ NK * q + 1];
                             
                         for (int l = 3; l < NK; ++l)
                         {
                             wij[ NK * q + l] = 0.0;
-                        }                        
+                        } 
+                        //if (j==0 && q==0) printf("cons 2: %d %f %f %f\n\n", i, wij[ NK * q + 2], wtilde[ NK * q + 2], wij[ NK * q + 5]);                        
+                       
                     }
                 }
             }
@@ -1253,6 +1268,33 @@ void limit_characteristic_weights(struct UpdateStruct update)
                       {vx,   vx,     vx,      1.0},
                       {  vy-cs,        vy,         vy+cs,        0.0},
                       {(h - cs*vy), k,      (h + cs*vy),    vx}};
+/*
+                real result[NCONS][NCONS];
+                // Initializing elements of matrix mult to 0.
+                for (int qi = 0; qi < NCONS; ++qi) {
+                   for (int qj = 0; qj < NCONS; ++qj) {
+                      result[qi][qj] = 0;
+                   }
+                }
+             
+                // Multiplying first and second matrices and storing it in result
+                for (int qi = 0; qi < NCONS; ++qi) {
+                   for (int qj = 0; qj < NCONS; ++qj) {
+                      for (int qk = 0; qk < NCONS; ++qk) {
+                         result[qi][qj] += ry[qi][qk] * ly[qk][qj];
+                      }
+                   }
+                }
+
+                printf("\nOutput Matrix:\n");
+                for (int qi = 0; qi < NCONS; ++qi) 
+                {
+                    for (int qj = 0; qj < NCONS; ++qj) 
+                    {
+                        printf("%f  ", ry[qi][qj]);
+                        if (qj == (NCONS - 1) ) printf("\n");
+                    }
+                }*/
 
                 // convert to characteristic variables
                 for (int qi = 0; qi < NCONS; ++qi)
@@ -1281,6 +1323,7 @@ void limit_characteristic_weights(struct UpdateStruct update)
                 {
                     c1t[q] = minmod(SQRT_THREE * c1[q], BETA * cb[q], BETA * ct[q]) / SQRT_THREE;
                     c2t[q] = minmod(SQRT_THREE * c2[q], BETA * cl[q], BETA * cr[q]) / SQRT_THREE;
+                    //if (j==0)printf("char: %f %f %f %f \n", SQRT_THREE * c2[q], BETA * cl[q], BETA * cr[q], SQRT_THREE * c2t[q]);
                 }
                 
                 // compute limited conservative slopes (for l=1, l=2)
@@ -1298,8 +1341,10 @@ void limit_characteristic_weights(struct UpdateStruct update)
                                 
                 for (int q = 0; q < NCONS; ++q)
                 {
-                    if ( (fabs(c2t[q] - c2[q]) > 1e-6) || (fabs(c1t[q] - c1[q]) > 1e-6) )
-                    { 
+                    if ( (c2t[q] != c2[q]) || ( c1t[q] != c1[q]) )
+                    {              
+                        //if (j==0 && q==0)printf("char: %d %f %f %f %f \n\n",i, c2[q], c2t[q], w2[q], w2t[q]);
+
                         wij[NK * q + 2] = w2t[q];
                         wij[NK * q + 1] = w1t[q];
                             
@@ -1340,7 +1385,7 @@ int main()
     initial_weights(weights_host, ni, nj, x0, x1, y0, y1);
     update_struct_set_weights(update, weights_host);
     mark_troubled_cells(update);
-
+    limit_characteristic_weights(update);
 
     int iteration = 0;
     real time = 0.0;
@@ -1352,12 +1397,12 @@ int main()
 
         for (int i = 0; i < fold; ++i)
         {
-            limit_conserved_weights(update);
-            //limit_characteristic_weights(update);
+            mark_troubled_cells(update);
+            //limit_conserved_weights(update);
+            limit_characteristic_weights(update);
             compute_delta_weights(update);
             add_delta_weights(update, dt);
-            mark_troubled_cells(update);
-
+            
             time += dt;
             iteration += 1;
         }
@@ -1390,10 +1435,10 @@ int main()
                 cons[q] = wij[NK * q + 0]; 
             }
 
-            //conserved_to_primitive(cons, prim);
-            fprintf(outfile, "%f %f %f %f %f %f %f\n", x, y, cons[0], cons[1], cons[2], cons[3], *tij);
-            //fprintf(outfile, "%f %f %f %f %f %f %f\n", x, y, prim[0], prim[1], prim[2], prim[3], *tij);
-            //fprintf(outfile, "%f %f %f %f %f %f %f\n", x, y, wij[0], wij[1], wij[2], prim[0], *tij);
+            conserved_to_primitive(cons, prim);
+            //fprintf(outfile, "%f %f %f %f %f %f %f\n", x, y, cons[0], cons[1], cons[2], cons[3], *tij);
+            fprintf(outfile, "%f %f %f %f %f %f %f\n", x, y, prim[0], prim[1], prim[2], prim[3], *tij);
+            //fprintf(outfile, "%f %f %f %f %f %f\n", x, y, wij[0], wij[2], wij[5], *tij);
         }
     }
     fclose(outfile);
