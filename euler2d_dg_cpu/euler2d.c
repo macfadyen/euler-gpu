@@ -14,7 +14,7 @@
 #define minabs(a, b, c) min3(fabs(a), fabs(b), fabs(c))
 #define maxabs5(a, b, c, d, e) max2(max2(fabs(a), fabs(b)), max3(fabs(c), fabs(d), fabs(e)))
 
-#define BETA 0.5
+#define BETA_TVB 0.75
 #define CFL 0.01
 
 typedef double real;
@@ -357,8 +357,8 @@ real minmod(real a, real b, real c)
 real minmodTVB(real w1, real w0l, real w0, real w0r, real dl)
 {
     real a = w1 * SQRT_THREE;
-    real b = (w0 - w0l) * BETA;
-    real c = (w0r - w0) * BETA;
+    real b = (w0 - w0l) * BETA_TVB;
+    real c = (w0r - w0) * BETA_TVB;
 
     const real M = 0.0; //Cockburn & Shu, JCP 141, 199 (1998) eq. 3.7 suggest M~50.0
     //const real Mtilde = 0.5; //Schaal+
@@ -782,7 +782,7 @@ void compute_delta_weights(struct UpdateStruct update)
                 conserved_to_primitive(consm, primm);
                 conserved_to_primitive(consp, primp);
                 
-                riemann_hlle(primm, primp, flux_x, 0);
+                riemann_hllc(primm, primp, flux_x, 0);
                 
                 for (int q = 0; q < NCONS; ++q)
                 {
@@ -811,7 +811,7 @@ void compute_delta_weights(struct UpdateStruct update)
                 conserved_to_primitive(consm, primm);
                 conserved_to_primitive(consp, primp);
                 
-                riemann_hlle(primm, primp, flux_x, 0);
+                riemann_hllc(primm, primp, flux_x, 0);
             
                 for (int q = 0; q < NCONS; ++q)
                 {
@@ -840,7 +840,7 @@ void compute_delta_weights(struct UpdateStruct update)
                 conserved_to_primitive(consm, primm);
                 conserved_to_primitive(consp, primp);
                 
-                riemann_hlle(primm, primp, flux_y, 1);
+                riemann_hllc(primm, primp, flux_y, 1);
 
                 for (int q = 0; q < NCONS; ++q)
                 {
@@ -869,7 +869,7 @@ void compute_delta_weights(struct UpdateStruct update)
                 conserved_to_primitive(consm, primm);
                 conserved_to_primitive(consp, primp);
                 
-                riemann_hlle(primm, primp, flux_y, 1);
+                riemann_hllc(primm, primp, flux_y, 1);
 
                 for (int q = 0; q < NCONS; ++q)
                 {
@@ -1221,7 +1221,7 @@ void limit_characteristic_weights(struct UpdateStruct update)
             {
                 for (int q = 0; q < NCONS; ++q)
                 {
-                    // mean values (l=0) of conserved variables in the cell and nearest neighbor cells
+                    // mean values (l=0) o conserved variables in the cell and nearest neighbor cells
                     w0[q]  = wij[q * NK + 0];
                     w0l[q] = wli[q * NK + 0]; // left 
                     w0r[q] = wri[q * NK + 0]; // right
@@ -1321,8 +1321,8 @@ void limit_characteristic_weights(struct UpdateStruct update)
                 // limit characteristic slopes (for l=1, l=2)
                 for (int q = 0; q < NCONS; ++q)
                 {
-                    c1t[q] = minmod(SQRT_THREE * c1[q], BETA * cb[q], BETA * ct[q]) / SQRT_THREE;
-                    c2t[q] = minmod(SQRT_THREE * c2[q], BETA * cl[q], BETA * cr[q]) / SQRT_THREE;
+                    c1t[q] = minmod(SQRT_THREE * c1[q], BETA_TVB * cb[q], BETA_TVB * ct[q]) / SQRT_THREE;
+                    c2t[q] = minmod(SQRT_THREE * c2[q], BETA_TVB * cl[q], BETA_TVB * cr[q]) / SQRT_THREE;
                     //if (j==0)printf("char: %f %f %f %f \n", SQRT_THREE * c2[q], BETA * cl[q], BETA * cr[q], SQRT_THREE * c2t[q]);
                 }
                 
@@ -1384,8 +1384,6 @@ int main()
 
     initial_weights(weights_host, ni, nj, x0, x1, y0, y1);
     update_struct_set_weights(update, weights_host);
-    mark_troubled_cells(update);
-    limit_characteristic_weights(update);
 
     int iteration = 0;
     real time = 0.0;
@@ -1397,12 +1395,13 @@ int main()
 
         for (int i = 0; i < fold; ++i)
         {
+
+            compute_delta_weights(update);
+            add_delta_weights(update, dt);
             mark_troubled_cells(update);
             //limit_conserved_weights(update);
             limit_characteristic_weights(update);
-            compute_delta_weights(update);
-            add_delta_weights(update, dt);
-            
+
             time += dt;
             iteration += 1;
         }
