@@ -14,8 +14,8 @@
 #define minabs(a, b, c) min3(fabs(a), fabs(b), fabs(c))
 #define maxabs5(a, b, c, d, e) max2(max2(fabs(a), fabs(b)), max3(fabs(c), fabs(d), fabs(e)))
 
-#define BETA_TVB 0.75
-#define CFL 0.08
+#define BETA_TVB 1.0
+#define CFL 0.017
 
 typedef double real;
 #define square_root sqrt
@@ -354,6 +354,24 @@ real minmod(real a, real b, real c)
         return x;
 }
 
+real minmodB(real a, real b, real c, real dl)
+{
+    const real M = 0.075; //Cockburn & Shu, JCP 141, 199 (1998) eq. 3.7 suggest M~50.0
+
+    if (fabs(a) <= M * dl * dl)
+    {        
+        return a;
+    }
+    else
+    {
+        real x1 = fabs(sign(a) + sign(b)) * (sign(a) + sign(c));
+        real x2 = minabs(a, b, c);
+        real x  = 0.25 * x1 * x2;
+    
+        return x;
+    }
+}
+
 real minmodTVB(real w1, real w0l, real w0, real w0r, real dl)
 {
     real a = w1 * SQRT_THREE;
@@ -628,6 +646,7 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
                     vy = 0.05*sin(2.0*PI*x);
                     pressure = 2.5;
                 }
+
                 prim[0] = rho;
                 prim[1] = vx;
                 prim[2] = vy;
@@ -947,7 +966,6 @@ void add_delta_weights(struct UpdateStruct update, real dt)
                     wij[ NK * q + l] += 0.5 * dwij[NK * q + l] * dt / dx; //assumes dy=dx
                 }
             }
-
         }
     }
 }
@@ -1117,7 +1135,7 @@ void limit_conserved_weights(struct UpdateStruct update)
 
             const real  *tij = &update.trouble[i * nj + j];
 
-            if ( *tij > 0.4 )
+            if ( *tij > ck )
             {
                 for (int q = 0; q < NCONS; ++q)
                 {
@@ -1292,8 +1310,8 @@ void limit_characteristic_weights(struct UpdateStruct update)
                 // limit characteristic slopes (for l=1, l=2)
                 for (int q = 0; q < NCONS; ++q)
                 {
-                    c1t[q] = minmod(SQRT_THREE * c1[q], BETA_TVB * cb[q], BETA_TVB * ct[q]) / SQRT_THREE;
-                    c2t[q] = minmod(SQRT_THREE * c2[q], BETA_TVB * cl[q], BETA_TVB * cr[q]) / SQRT_THREE;
+                    c1t[q] = minmodB(SQRT_THREE * c1[q], BETA_TVB * cb[q], BETA_TVB * ct[q], dy) / SQRT_THREE;
+                    c2t[q] = minmodB(SQRT_THREE * c2[q], BETA_TVB * cl[q], BETA_TVB * cr[q], dx) / SQRT_THREE;
                 }
                 
                 // compute limited conservative slopes (for l=1, l=2)
@@ -1327,11 +1345,10 @@ void limit_characteristic_weights(struct UpdateStruct update)
     }
 }
 
-
 int main()
 {
-    const int ni = 512;
-    const int nj = 512;
+    const int ni = 256;
+    const int nj = 256;
     const int fold = 1;
     const real x0 = 0.0;
     const real x1 = 1.0;
@@ -1403,6 +1420,7 @@ int main()
             }
 
             conserved_to_primitive(cons, prim);
+
             //fprintf(outfile, "%f %f %f %f %f %f %f\n", x, y, cons[0], cons[1], cons[2], cons[3], *tij);
             fprintf(outfile, "%f %f %f %f %f %f %f\n", x, y, prim[0], prim[1], prim[2], prim[3], *tij);
             //fprintf(outfile, "%f %f %f %f %f %f\n", x, y, wij[0], wij[2], wij[5], *tij);
