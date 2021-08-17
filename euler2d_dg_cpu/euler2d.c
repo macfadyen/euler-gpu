@@ -15,7 +15,7 @@
 #define maxabs5(a, b, c, d, e) max2(max2(fabs(a), fabs(b)), max3(fabs(c), fabs(d), fabs(e)))
 
 #define BETA_TVB 0.5
-#define CFL 0.017
+#define CFL 0.1
 
 typedef double real;
 #define square_root sqrt
@@ -356,7 +356,7 @@ real minmod(real a, real b, real c)
 
 real minmodB(real a, real b, real c, real dl)
 {
-    const real M = 0.075; //Cockburn & Shu, JCP 141, 199 (1998) eq. 3.7 suggest M~50.0
+    const real M = 0.0; //Cockburn & Shu, JCP 141, 199 (1998) eq. 3.7 suggest M~50.0
 
     if (fabs(a) <= M * dl * dl)
     {        
@@ -611,7 +611,8 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
                 real xq = x + (cell.node[qp].xsi_x / 2.0) * dx;
                 real yq = y + (cell.node[qp].xsi_y / 2.0) * dy;
 
-                // real r2 = power(xq - xmid, 2) + power(yq - ymid, 2);
+                real r2 = power(xq - xmid, 2) + power(yq - ymid, 2);
+                real r  = sqrt(r2);
 
                 if (0.0)
                 {
@@ -652,7 +653,7 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
                         rho = 1.0;
                     }
 
-                    vy = 0.05*sin(2.0*PI*x);
+                    vy = 0.01*sin(2.0*PI*x);
                     pressure = 2.5;
 
                     prim[0] = rho;
@@ -676,7 +677,7 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
                     cons[2] =            1.0 * amplitude * sin(2.0 * PI * xq / (x1 - x0) );
                     cons[3] = etherm +   1.5 * amplitude * sin(2.0 * PI * xq / (x1 - x0) );
                 }
-                else
+                else if (0.0)
                 {
                     prim[0] = 1.0;
                     prim[1] = 0.0;
@@ -686,6 +687,29 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
     
                     primitive_to_conserved(prim, cons); 
                 }
+                else if (1.0)
+                {
+                    //https://www.astro.princeton.edu/~jstone/Athena/tests/blast/blast.html
+                    if ( r < 0.1 )
+                    {
+                        pressure = 10.0;
+                    }
+                    else
+                    {
+                        pressure = 0.1;
+                    }
+
+                    rho = 1.0;
+                    vx  = 0.0;
+                    vy  = 0.0;
+
+                    prim[0] = rho;
+                    prim[1] = vx;
+                    prim[2] = vy;
+                    prim[3] = pressure;
+    
+                    primitive_to_conserved(prim, cons);
+                } 
 
                 for (int l = 0; l < NK; ++l)
                 {
@@ -799,27 +823,35 @@ void compute_delta_weights(struct UpdateStruct update)
             
             // Outflow in x
             //
-            if (il == -1)
-                il += 1;
-            
-            if (ir == ni)
-                ir -= 1;
+            //if (il == -1)
+            //    il += 1;
+            //
+            //if (ir == ni)
+            //    ir -= 1;
 
             // Periodic in x
 
-            //if (il == -1)
-            //    il = ni - 1;
-            //
-            //if (ir == ni)
-            //    ir = 0;
+            if (il == -1)
+                il = ni - 1;
+            
+            if (ir == ni)
+                ir = 0;
 
             // Outflow in y
             
+            //if (jl == -1)
+            //    jl += 1;
+//
+            //if (jr == nj)
+            //    jr -= 1;
+
+            // Periodic in y
+            
             if (jl == -1)
-                jl += 1;
+                jl = nj - 1;
 
             if (jr == nj)
-                jr -= 1;
+                jr = 0;
             
             /* */ real *wij = &update.weights[NCONS * NK * (i  * nj + j )];
             /* */ real *dwij=&update.dweights[NCONS * NK * (i  * nj + j )];
@@ -855,7 +887,7 @@ void compute_delta_weights(struct UpdateStruct update)
                 conserved_to_primitive(consm, primm);
                 conserved_to_primitive(consp, primp);
                 
-                riemann_hlle(primm, primp, flux_x, 0);
+                riemann_hllc(primm, primp, flux_x, 0);
                 
                 for (int q = 0; q < NCONS; ++q)
                 {
@@ -884,7 +916,7 @@ void compute_delta_weights(struct UpdateStruct update)
                 conserved_to_primitive(consm, primm);
                 conserved_to_primitive(consp, primp);
                 
-                riemann_hlle(primm, primp, flux_x, 0);
+                riemann_hllc(primm, primp, flux_x, 0);
             
                 for (int q = 0; q < NCONS; ++q)
                 {
@@ -913,7 +945,7 @@ void compute_delta_weights(struct UpdateStruct update)
                 conserved_to_primitive(consm, primm);
                 conserved_to_primitive(consp, primp);
                 
-                riemann_hlle(primm, primp, flux_y, 1);
+                riemann_hllc(primm, primp, flux_y, 1);
 
                 for (int q = 0; q < NCONS; ++q)
                 {
@@ -942,7 +974,7 @@ void compute_delta_weights(struct UpdateStruct update)
                 conserved_to_primitive(consm, primm);
                 conserved_to_primitive(consp, primp);
                 
-                riemann_hlle(primm, primp, flux_y, 1);
+                riemann_hllc(primm, primp, flux_y, 1);
 
                 for (int q = 0; q < NCONS; ++q)
                 {
@@ -1040,21 +1072,37 @@ void mark_troubled_cells(struct UpdateStruct update)
             if (ir == ni)
                 ir -= 1;
 
+            // Outflow in x
+            //
+            //if (il == -1)
+            //    il += 1;
+            //
+            //if (ir == ni)
+            //    ir -= 1;
+
             // Periodic in x
 
-            //if (il == -1)
-            //    il = ni - 1;
-//
-            //if (ir == ni)
-            //    ir = 0;
+            if (il == -1)
+                il = ni - 1;
+            
+            if (ir == ni)
+                ir = 0;
 
             // Outflow in y
             
+            //if (jl == -1)
+            //    jl += 1;
+//
+            //if (jr == nj)
+            //    jr -= 1;
+
+            // Periodic in y
+            
             if (jl == -1)
-                jl += 1;
+                jl = nj - 1;
 
             if (jr == nj)
-                jr -= 1;
+                jr = 0;
 
             /* */ real *wij = &update.weights[NCONS * NK * (i  * nj + j )];
 
@@ -1169,27 +1217,35 @@ void limit_conserved_weights(struct UpdateStruct update)
                         
             // Outflow in x
             //
-            if (il == -1)
-                il += 1;
-            
-            if (ir == ni)
-                ir -= 1;
+            //if (il == -1)
+            //    il += 1;
+            //
+            //if (ir == ni)
+            //    ir -= 1;
 
             // Periodic in x
 
-            //if (il == -1)
-            //    il = ni - 1;
-            //
-            //if (ir == ni)
-            //    ir = 0;
+            if (il == -1)
+                il = ni - 1;
+            
+            if (ir == ni)
+                ir = 0;
 
             // Outflow in y
+            
+            //if (jl == -1)
+            //    jl += 1;
+//
+            //if (jr == nj)
+            //    jr -= 1;
 
+            // Periodic in y
+            
             if (jl == -1)
-                jl += 1;
+                jl = nj - 1;
 
             if (jr == nj)
-                jr -= 1;
+                jr = 0;
 
             /* */ real *wij = &update.weights[NCONS * NK * (i  * nj + j )];
 
@@ -1246,27 +1302,35 @@ void limit_characteristic_weights(struct UpdateStruct update)
             
             // Outflow in x
             //
-            if (il == -1)
-                il += 1;
-            
-            if (ir == ni)
-                ir -= 1;
+            //if (il == -1)
+            //    il += 1;
+            //
+            //if (ir == ni)
+            //    ir -= 1;
 
             // Periodic in x
 
-            //if (il == -1)
-            //    il = ni - 1;
-            //
-            //if (ir == ni)
-            //    ir = 0;
+            if (il == -1)
+                il = ni - 1;
+            
+            if (ir == ni)
+                ir = 0;
 
             // Outflow in y
             
+            //if (jl == -1)
+            //    jl += 1;
+            //
+            //if (jr == nj)
+            //    jr -= 1;
+
+            // Periodic in y
+            
             if (jl == -1)
-                jl += 1;
+                jl = nj - 1;
 
             if (jr == nj)
-                jr -= 1;
+                jr = 0;
 
 
                   real *wij = &update.weights[NCONS * NK * (i  * nj + j )];
@@ -1446,23 +1510,24 @@ int main()
     initial_weights(weights_host, ni, nj, x0, x1, y0, y1);
     update_struct_set_weights(update, weights_host);
     mark_troubled_cells(update);
+    limit_conserved_weights(update);
 
     int iteration = 0;
     real time = 0.0;
     real dt = dx * CFL;
     //real dt = dx / 128.0; 
 
-    while (time < 0.009)
+    while (time < 0.2)
     {
         clock_t start = clock();
 
         for (int i = 0; i < fold; ++i)
         {
-            mark_troubled_cells(update);
-            //limit_conserved_weights(update);
-            //limit_characteristic_weights(update);
             compute_delta_weights(update);
             add_delta_weights(update, dt);
+            mark_troubled_cells(update);
+            limit_conserved_weights(update);
+            //limit_characteristic_weights(update);
 
             time += dt;
             iteration += 1;
@@ -1479,7 +1544,7 @@ int main()
 
     update_struct_del(update);
 
-    FILE* outfile = fopen("euler2d.dat", "w");
+    FILE* outfile = fopen("blast2d.dat", "w");
 
     for (int i = 0; i < ni; ++i)
     {
@@ -1499,7 +1564,7 @@ int main()
             conserved_to_primitive(cons, prim);
 
             //fprintf(outfile, "%.15f %.15f %.15f %.15f %.15f %.15f %.15f\n", x, y, cons[0], cons[1], cons[2], cons[3], *tij);
-            if(j==0)fprintf(outfile, "%.15f %.15f %.15f %.15f %.15f %.15f %.15f\n", x, y, prim[0], prim[1], prim[2], prim[3], *tij);
+            fprintf(outfile, "%.15f %.15f %.15f %.15f %.15f %.15f %.15f\n", x, y, prim[0], prim[1], prim[2], prim[3], *tij);
             //fprintf(outfile, "%.15f %.15f %.15f %.15f %.15f %.15f\n", x, y, wij[0], wij[2], wij[5], *tij);
             //if(j==0)fprintf(outfile, "%.15f %.15f %.15f %.15f %.15f %.15f\n", x, y, wij[0*NK+0], wij[0*NK+2], wij[0*NK+5], *tij);
         }
