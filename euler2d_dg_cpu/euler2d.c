@@ -23,10 +23,10 @@ typedef double real;
 #define power pow
 
 #define NDIM 2
-#define DG_ORDER 4
-#define NFACE 4
-#define NCELL 16
-#define NK    10  // number of basis polynomials
+#define DG_ORDER 5
+#define NFACE 5
+#define NCELL 25
+#define NK    15  // number of basis polynomials
 #define NCONS 4  // number of conserved variables
 
 #define SQRT_THREE square_root(3.0)
@@ -127,7 +127,7 @@ struct Cells set_cell(void)
 
     #elif (DG_ORDER == 4)
 
-        real xsi[NFACE] = {-sqrt(3.0/7.0+2.0/7.0*sqrt(6.0/5.0)), -sqrt(3.0/7.0-2.0/7.0*sqrt(6.0/5.0)), sqrt(3.0/7.0-2.0/7.0*sqrt(6.0/5.0)), sqrt(3.0/7.0+2.0/7.0*sqrt(6.0/5.0))}; // Gaussian quadrature points
+        real xsi[NFACE] = {-sqrt(3.0/7.0+2.0/7.0*sqrt(6.0/5.0)), -sqrt(3.0/7.0-2.0/7.0*sqrt(6.0/5.0)), sqrt(3.0/7.0-2.0/7.0*sqrt(6.0/5.0)), sqrt(3.0/7.0+2.0/7.0*sqrt(6.0/5.0))}; // Gaussian quadrature points        
         real  gw[NFACE] = {(18.0 - sqrt(30.0))/36.0, (18.0 + sqrt(30.0))/36.0, (18.0 + sqrt(30.0))/36.0, (18.0 - sqrt(30.0))/36.0};  // 1D Gaussian weights   
 
     #elif (DG_ORDER == 5)
@@ -1008,7 +1008,7 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
                     // Schaal+(2015) Isentropic Vortex Sec. 5.1
                     real beta = 5.0;
                     real g = ADIABATIC_GAMMA;
-                    real vb = 1.0;
+                    real vb = 0.0;
                     rho = pow(1.0 - (g-1.0)*beta*beta/(8.0*g*PI*PI)*exp(1.0-r2), 1.0/(g-1.0));
                     pressure = pow(rho,g);
                     vx = -(yq - ymid)*beta/(2.0*PI)*exp((1.0-r2)/2.0);
@@ -1025,7 +1025,6 @@ void initial_weights(real *weights, int ni, int nj, real x0, real x1, real y0, r
                     //cons[1] = rho*(1.0 - beta/(2.0*PI)*exp((1.0-r2)/2.0));
                     //cons[2] = rho*(1.0 + beta/(2.0*PI)*exp((1.0-r2)/2.0));
                     //cons[3] = pressure / (g-1.0) + 0.5*(cons[1]*cons[1]+cons[2]*cons[2])/rho;
-
                 }
 
                 for (int l = 0; l < NK; ++l)
@@ -1792,10 +1791,92 @@ void limit_characteristic_weights(struct UpdateStruct update)
     }
 }
 
+real compute_L1_error(struct UpdateStruct update)
+{
+    // Calculate the L1 error by looping over quadrature points
+
+    real l1_error = 0.0;
+
+    int ni = update.ni;
+    int nj = update.nj;
+
+    real x0 = update.x0;
+    real x1 = update.x1;
+    real y0 = update.y0;
+    real y1 = update.y1;
+
+    real dx = (x1 - x0) / ni;
+    real dy = (y1 - y0) / nj;
+
+    for (int i = 0; i < ni; ++i)
+    {
+        for (int j = 0; j < nj; ++j)
+        {
+            real x = x0 + (i + 0.5) * dx;
+            real y = y0 + (j + 0.5) * dy;
+
+            real xmid = 0.5 * (x0 + x1);
+            real ymid = 0.5 * (y0 + y1);
+
+            const real *wij = &update.weights[NCONS * NK * (i * nj + j)];
+
+            real prim[NCONS];
+            real cons[NCONS];
+            real rho, vx, vy, pressure;
+
+            // loop over cell quadrature points
+            for (int qp = 0; qp < NCELL; ++qp){
+
+                // global coordinates of the quadrature points
+                real xq = x + (cell.node[qp].xsi_x / 2.0) * dx;
+                real yq = y + (cell.node[qp].xsi_y / 2.0) * dy;
+
+                real r2 = power(xq - xmid, 2) + power(yq - ymid, 2);
+                real r  = sqrt(r2);
+                
+                if (1.0)
+                {
+                    // Schaal+(2015) Isentropic Vortex Sec. 5.1
+                    real beta = 5.0;
+                    real g = ADIABATIC_GAMMA;
+                    real vb = 0.0;
+                    rho = pow(1.0 - (g-1.0)*beta*beta/(8.0*g*PI*PI)*exp(1.0-r2), 1.0/(g-1.0));
+                    pressure = pow(rho,g);
+                    vx = -(yq - ymid)*beta/(2.0*PI)*exp((1.0-r2)/2.0);
+                    vy =  (xq - xmid)*beta/(2.0*PI)*exp((1.0-r2)/2.0);  
+                    prim[0] = rho;
+                    prim[1] = vx + vb;
+                    prim[2] = vy + vb;
+                    prim[3] = pressure;
+
+                    // initial condition conserved variables at quadrature points
+                    primitive_to_conserved(prim, cons);
+
+                    // compute rho at quadrature points from the weights at time t
+
+                    real rhot = 0.0;
+                    for (int l = 0; l < NK; ++l)
+                    {
+                        rhot += wij[NK * 0 + l] * cell.node[qp].phi[l];
+                    }
+
+                    // numerical integral of L1 error
+
+                    l1_error += 0.25 * fabs(cons[0]-rhot) * cell.node[qp].gw;
+
+                }
+            }
+        }
+    }
+
+    return l1_error / (ni * nj);
+
+}
+
 int main()
 {
-    const int ni = 128;
-    const int nj = 128;
+    const int ni = 32;
+    const int nj = 32;
     const int fold = 1;
     const real x0 = 0.0;
     const real x1 = 10.0;
@@ -1824,7 +1905,7 @@ int main()
     real dt = dx * CFL;
     //real dt = dx / 128.0; 
 
-    while (time < 2.0)
+    while (time < 0.1)
     {
         clock_t start = clock();
 
@@ -1845,6 +1926,10 @@ int main()
         real mcps = (ni * nj / 1e6) / seconds * fold;
         printf("[%d] t=%.3e Mcps=%.2f Mpps=%.2f Mnps=%.2f\n", iteration, time, mcps, NK * mcps, NCELL * mcps);
     }
+
+    real l1_error = compute_L1_error(update);
+
+    printf("\n\nN, L1 Error: %d %.15e\n\n",ni, l1_error);
 
     update_struct_get_weights(update, weights_host);
     update_struct_get_trouble(update, trouble_host);
