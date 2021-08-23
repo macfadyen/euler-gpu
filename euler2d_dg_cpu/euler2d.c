@@ -14,20 +14,21 @@
 #define minabs(a, b, c) min3(fabs(a), fabs(b), fabs(c))
 #define maxabs5(a, b, c, d, e) max2(max2(fabs(a), fabs(b)), max3(fabs(c), fabs(d), fabs(e)))
 
-#define BETA_TVB 0.5
-#define CFL 0.01
-#define CK 0.06 // Troubled Cell Indicator G. Fu & C.-W. Shu (JCP, 347, 305 (2017))
-
 typedef double real;
 #define square_root sqrt
 #define power pow
 
 #define NDIM 2
-#define DG_ORDER 5
-#define NFACE 5
-#define NCELL 25
-#define NK    15  // number of basis polynomials
+#define DG_ORDER 3
+#define NFACE 3
+#define NCELL 9
+#define NK    6  // number of basis polynomials
 #define NCONS 4  // number of conserved variables
+
+#define BETA_TVB 1.0
+#define CFL 1e-4 * 0.2 / (2.0 * (DG_ORDER - 1.0) + 1.0)
+
+#define CK 0.03 // Troubled Cell Indicator G. Fu & C.-W. Shu (JCP, 347, 305 (2017))
 
 #define SQRT_THREE square_root(3.0)
 #define SQRT_FIVE  square_root(5.0)
@@ -649,7 +650,7 @@ real minmod(real a, real b, real c)
 
 real minmodB(real a, real b, real c, real dl)
 {
-    const real M = 0.0; //Cockburn & Shu, JCP 141, 199 (1998) eq. 3.7 suggest M~50.0
+    const real M = 1.0; //Cockburn & Shu, JCP 141, 199 (1998) eq. 3.7 suggest M~50.0
 
     if (fabs(a) <= M * dl * dl)
     {        
@@ -671,7 +672,7 @@ real minmodTVB(real w1, real w0l, real w0, real w0r, real dl)
     real b = (w0 - w0l) * BETA_TVB;
     real c = (w0r - w0) * BETA_TVB;
 
-    const real M = 0.0; //Cockburn & Shu, JCP 141, 199 (1998) eq. 3.7 suggest M~50.0
+    const real M = 10.0; //Cockburn & Shu, JCP 141, 199 (1998) eq. 3.7 suggest M~50.0
     //const real Mtilde = 0.5; //Schaal+
     if (fabs(a) <= M * dl * dl)
     //if (fabs(a) <= Mtilde * dl)
@@ -687,7 +688,6 @@ real minmodTVB(real w1, real w0l, real w0, real w0r, real dl)
         return x;
     }
 }
-
 
 void conserved_to_primitive(const real *cons, real *prim)
 {
@@ -1138,36 +1138,36 @@ void compute_delta_weights(struct UpdateStruct update)
             int jr = j + 1;
             
             // Outflow in x
-            //
-            //if (il == -1)
-            //    il += 1;
-            //
-            //if (ir == ni)
-            //    ir -= 1;
+            
+            if (il == -1)
+                il += 1;
+            
+            if (ir == ni)
+                ir -= 1;
 
             // Periodic in x
 
-            if (il == -1)
-                il = ni - 1;
-            
-            if (ir == ni)
-                ir = 0;
+            //if (il == -1)
+            //    il = ni - 1;
+            //
+            //if (ir == ni)
+            //    ir = 0;
 
             // Outflow in y
             
-            //if (jl == -1)
-            //    jl += 1;
-            //
-            //if (jr == nj)
-            //    jr -= 1;
+            if (jl == -1)
+                jl += 1;
+            
+            if (jr == nj)
+                jr -= 1;
 
             // Periodic in y
             
-            if (jl == -1)
-                jl = nj - 1;
-
-            if (jr == nj)
-                jr = 0;
+            //if (jl == -1)
+            //    jl = nj - 1;
+//
+            //if (jr == nj)
+            //    jr = 0;
             
             /* */ real *wij = &update.weights[NCONS * NK * (i  * nj + j )];
             /* */ real *dwij=&update.dweights[NCONS * NK * (i  * nj + j )];
@@ -1381,36 +1381,36 @@ void mark_troubled_cells(struct UpdateStruct update)
             int jr = j + 1;
             
             // Outflow in x
-            //
-            //if (il == -1)
-            //    il += 1;
-            //
-            //if (ir == ni)
-            //    ir -= 1;
+            
+            if (il == -1)
+                il += 1;
+            
+            if (ir == ni)
+                ir -= 1;
 
             // Periodic in x
 
-            if (il == -1)
-                il = ni - 1;
-            
-            if (ir == ni)
-                ir = 0;
-
+            //if (il == -1)
+            //    il = ni - 1;
+            //
+            //if (ir == ni)
+            //    ir = 0;
+//
             // Outflow in y
             
-            //if (jl == -1)
-            //    jl += 1;
-//
-            //if (jr == nj)
-            //    jr -= 1;
+            if (jl == -1)
+                jl += 1;
+
+            if (jr == nj)
+                jr -= 1;
 
             // Periodic in y
             
-            if (jl == -1)
-                jl = nj - 1;
-
-            if (jr == nj)
-                jr = 0;
+            //if (jl == -1)
+            //    jl = nj - 1;
+//
+            //if (jr == nj)
+            //    jr = 0;
 
             /* */ real *wij = &update.weights[NCONS * NK * (i  * nj + j )];
 
@@ -1531,27 +1531,27 @@ void limit_conserved_weights(struct UpdateStruct update)
 
             // Periodic in x
 
-            if (il == -1)
-                il = ni - 1;
-            
-            if (ir == ni)
-                ir = 0;
+            //if (il == -1)
+            //    il = ni - 1;
+            //
+            //if (ir == ni)
+            //    ir = 0;
 
             // Outflow in y
             
-            //if (jl == -1)
-            //    jl += 1;
-//
-            //if (jr == nj)
-            //    jr -= 1;
+            if (jl == -1)
+                jl += 1;
+
+            if (jr == nj)
+                jr -= 1;
 
             // Periodic in y
             
-            if (jl == -1)
-                jl = nj - 1;
-
-            if (jr == nj)
-                jr = 0;
+            //if (jl == -1)
+            //    jl = nj - 1;
+//
+            //if (jr == nj)
+            //    jr = 0;
 
             /* */ real *wij = &update.weights[NCONS * NK * (i  * nj + j )];
 
@@ -1775,7 +1775,7 @@ void limit_characteristic_weights(struct UpdateStruct update)
                                 
                 for (int q = 0; q < NCONS; ++q)
                 {
-                    if ( (c2t[q] != c2[q]) || ( c1t[q] != c1[q]) )
+                    if ( (c2t[q] != c2[q]) || (c1t[q] != c1[q]) )
                     {              
                         wij[NK * q + 2] = w2t[q];
                         wij[NK * q + 1] = w1t[q];
@@ -1875,8 +1875,8 @@ real compute_L1_error(struct UpdateStruct update)
 
 int main()
 {
-    const int ni = 32;
-    const int nj = 32;
+    const int ni = 2;
+    const int nj = 2;
     const int fold = 1;
     const real x0 = 0.0;
     const real x1 = 10.0;
@@ -1898,14 +1898,15 @@ int main()
     initial_weights(weights_host, ni, nj, x0, x1, y0, y1);
     update_struct_set_weights(update, weights_host);
     mark_troubled_cells(update);
-    limit_conserved_weights(update);
+    //limit_conserved_weights(update);
+    limit_characteristic_weights(update);    
 
     int iteration = 0;
     real time = 0.0;
     real dt = dx * CFL;
     //real dt = dx / 128.0; 
 
-    while (time < 0.1)
+    while (time < 0.0001)
     {
         clock_t start = clock();
 
@@ -1913,9 +1914,10 @@ int main()
         {
             compute_delta_weights(update);
             add_delta_weights(update, dt);
-            mark_troubled_cells(update);
-            limit_conserved_weights(update);
-            //limit_characteristic_weights(update);
+
+            mark_troubled_cells(update);    
+            //limit_conserved_weights(update);
+            limit_characteristic_weights(update);            
 
             time += dt;
             iteration += 1;
@@ -1966,4 +1968,3 @@ int main()
     free(trouble_host);
     return 0;
 }
-
